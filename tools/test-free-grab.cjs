@@ -77,7 +77,7 @@ function reset() {
     cfg.streamMinChars=20; cfg.streamGapMs=7000; cfg.streamTts=true; cfg.speakCooldown=0;
     transcript=[]; queue.length=0; lastSentences=[]; preHold=false; genBusy=false; playing=false;
     lastSpeakAt=0; lastStreamAt=0; streamAtOppChars=0; lastPlayEndAt=0; stopped=false;
-    freeMode=false; freeOwner=""; claimPending=false; ttsCache.clear();
+    freeMode=false; freeOwner=""; claimPending=false; cfg.freeClaimDelay=700; ttsCache.clear();
     window.__plays=0; window.__spk=0; window.__paused=0; window.__posts=[];
   `);
 }
@@ -94,7 +94,7 @@ async function makeDraft() {                        // 造出抢跑稿 + 预合�
   fire({ action: "stage", kind: "free", source: "display" });
   ok("进入自由辩论模式", win.eval("freeMode") === true);
   fire({ action: "free_idle", source: "display" });      // 发言权空出
-  await sleep(120);
+  await sleep(900);
   const claims = win.eval("window.__posts").filter(p => p.action === "claim");
   ok("无稿时不发 claim", claims.length === 0, `claims=${claims.length}`);
 
@@ -104,9 +104,20 @@ async function makeDraft() {                        // 造出抢跑稿 + 预合�
   await makeDraft();
   ok("抢跑稿已入队", win.eval("queue.length") >= 3, `队列 ${win.eval("queue.length")} 句`);
   fire({ action: "free_idle", source: "display" });
-  await sleep(150);
+  await sleep(900);
   const c2 = win.eval("window.__posts").filter(p => p.action === "claim");
   ok("有稿时才发 claim", c2.length >= 1, `claims=${c2.length} side=${c2[0] && c2[0].side}`);
+
+  /* ---------- 2.5 让手期间人先抢到 → AI 放弃 ---------- */
+  console.log("\n======== 2.5 让手期内有人先抢到 → AI 放弃抢话 ========");
+  reset(); fire({ action: "stage", kind: "free", source: "display" });
+  await makeDraft();
+  fire({ action: "free_idle", source: "display" });
+  await sleep(200);
+  fire({ action: "free_grant", side: "反方", source: "display" });   // 人抢到了
+  await sleep(800);
+  const c3 = win.eval("window.__posts").filter(p => p.action === "claim");
+  ok("人先抢到后 AI 不再 claim", c3.length === 0, `claims=${c3.length}`);
 
   /* ---------- 3 抢到 + 稿在 → 开口 ---------- */
   console.log("\n======== 3 抢到发言权 → 立刻开口 ========");

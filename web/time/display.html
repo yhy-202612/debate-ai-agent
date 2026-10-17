@@ -303,6 +303,7 @@ function connectStageBus(){
     };
     /* 断线由 EventSource 自动重连；重连后服务端会补发未过期的最新状态 */
   }catch(e){}
+  buzzListen();          // 同时订阅发令总线（接收 AI 的抢话申请并仲裁）
 }
 
 /* ---------- 提示音 ---------- */
@@ -459,7 +460,6 @@ function buzzListen(){
     };
   }catch(e){}
 }
-buzzListen();     // 订阅发令总线（接收 AI 的抢话申请并仲裁）
 function sendSerial(cmd){
   if(!serialWriter) return;
   const full = cmd === "BUZZ" ? "A:BUZZ\n" : cmd + "\n";
@@ -480,10 +480,17 @@ function onButton(key){
       hintEl.textContent = "自由辩论 · 等待抢话";
       beep(1, 520);
       buzzPub({action:"free_idle"});                 // 发言权空出 → 通知 AI 可抢（有稿才抢）
-    }else if(S.freeOwner){
-      /* 已有人持话 → 后按者无效，且明确告诉 AI 侧「没抢到」 */
+    }else if(S.freeOwner && S.freeOwner.side !== side){
+      /* 对方正在说 → 不得插话（一次一人），明确回一条「没抢到」 */
       beep(1, 300);
       buzzPub({action:"free_deny", side});
+    }else if(S.freeOwner){
+      /* 同侧换人（一辩↔三辩）→ 交接，发言权仍在本方 */
+      S.freeOwner = { side, seat };
+      setSpeaker(side, seat);
+      hintEl.textContent = (side==="pro"?"正方":"反方") + SEAT_NAME[seat] + " 接话";
+      beep(1, 880);
+      buzzPub({action:"free_grant", side});
     }else{
       S.freeOwner = { side, seat };
       setSpeaker(side, seat);

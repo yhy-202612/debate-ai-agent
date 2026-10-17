@@ -2283,7 +2283,12 @@ function buzzStart(){
       /* 发言权空出来了 → 有稿才去抢 */
       if(act === "free_idle"){
         freeOwner = "";
-        if(freeMode) claimFree();
+        /* ★ AI 让手：人按按钮有 200~300ms 反应时间，AI 若即时抢会几乎必胜、垄断发言权。
+           这里刻意等一手（默认 700ms），期间若有人抢到（freeOwner 被赋值）就放弃。 */
+        if(freeMode){
+          const wait = (cfg.freeClaimDelay == null ? 700 : cfg.freeClaimDelay);
+          setTimeout(()=>{ if(freeMode && !freeOwner) claimFree(); }, Math.max(0, wait));
+        }
         return;
       }
       if(ev.source === "ai" || act === "ai_done") return;
@@ -2310,7 +2315,7 @@ function buzzAiDone(){
 function speakNow(){
   if(playing) return true;                          // 正在说，无需动作
   if(!lastSentences.length && !queue.length) return false;
-  if(!queue.length) lastSentences.forEach(t=>queue.push({text:t, el:null}));
+  if(!queue.length) lastSentences.forEach(o=>queue.push({text:(typeof o==="string"?o:o.text), el:null}));
   preHold = false; stopped = false;
   lastSpeakAt = Date.now();
   const st=$("speakState"); if(st) st.textContent="立即发言…";
