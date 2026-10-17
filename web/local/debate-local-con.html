@@ -2272,16 +2272,37 @@ function playBlob(blob){
 }
 $("btnStop").onclick=()=>{
   const t=performance.now();
-  stopped=true; queue.length=0;
-  stopStreamSpeak();
-  if(curAudio){ try{curAudio.pause();}catch(e){} curAudio=null; }
-  if(abortCtrl){ try{abortCtrl.click=null;}catch(e){} }
-  if(abortCtrl){ try{abortCtrl.abort&&abortCtrl.abort();}catch(e){} }
-  suspended=false; lastInterruptMs=Math.round(performance.now()-t);
+  abortSpeak("手动叫停");
+  lastInterruptMs=Math.round(performance.now()-t);
   $("speakState").textContent="已叫停（"+lastInterruptMs+"ms）";
 };
 /* ★ 实体发令按钮（抢答器 → 大屏 → 服务端 → 这里）：同学发言结束按下即开口，不做任何判停 */
 let buzzES=null, buzzOn=false, buzzAiDoneAt=0;
+/* ★ 自由辩论抢话状态：freeMode 由大屏广播的环节类型驱动；
+   抢输/被抢 → 立刻阻断我方发言；稿子还没生成 → 不参与抢答。 */
+let freeMode=false, freeOwner="", claimPending=false;
+function abortSpeak(reason){
+  speakGen++;                              // 让进行中的 drain 立刻失效（不等它自己醒来）
+  stopped=true; playing=false; queue.length=0; preHold=false; preAudioBuf=[];
+  try{ stopStreamSpeak(); }catch(e){}
+  try{ if(curAudio){ curAudio.pause(); curAudio=null; } }catch(e){}
+  try{ if(abortCtrl && abortCtrl.abort) abortCtrl.abort(); }catch(e){}
+  suspended=false;
+  const st=$("speakState"); if(st) st.textContent="已阻断："+(reason||"未抢到发言权");
+}
+/* 参与抢答：稿子没生成就不抢（避免抢到却没内容、或边抢边等出稿） */
+function claimFree(){
+  if(!freeMode) return false;
+  if(!lastSentences.length && !queue.length) return false;
+  if(claimPending) return true;
+  claimPending = true;
+  setTimeout(()=>{ claimPending=false; }, 1500);
+  try{
+    fetch(api("/api/buzzer"), {method:"POST", headers:authHeaders({"Content-Type":"application/json"}),
+      body: JSON.stringify({side:cfg.side||"", action:"claim", source:"ai"})}).catch(()=>{});
+  }catch(e){}
+  return true;
+}
 function buzzStart(){
   if(buzzOn || typeof EventSource==="undefined") return;
   buzzOn = true;
@@ -2289,13 +2310,43 @@ function buzzStart(){
     buzzES = new EventSource(api("/api/buzzer/stream"));
     buzzES.onmessage = (m)=>{
       let ev={}; try{ ev=JSON.parse(m.data); }catch(e){ return; }
-      if(ev.source === "ai") return;
-      if(ev.action && ev.action !== "down") return;
-      const side = ev.side || "";
-      if(side && cfg.side && side === cfg.side) return;
-      const st=$("speakState"); if(st) st.textContent="收到发令（"+(side||"按钮")+"）→ 立即发言";
-      if(!speakNow()) genRebut(true);
+      const act = ev.action || "", side = ev.side || "";
+      const st = ()=>$("speakState");
+      /* 大屏广播环节类型 → 决定当前是不是自由辩论抢话环节 */
+      if(act === "stage"){
+        const was = freeMode; freeMode = (ev.kind === "free"); freeOwner = "";
+        if(freeMode && !was && st()) st().textContent = "自由辩论：等待抢话（有稿才抢）";
+        return;
+      }
+      /* 仲裁结果：谁抢到了发言权 */
+      if(act === "free_grant"){
+        freeOwner = side;
+        if(side && cfg.side && side === cfg.side){
+          if(lastSentences.length || queue.length) speakNow();
+          else if(st()) st().textContent = "抢到发言权，但稿子还没生成 → 本次不参与";
+        }else{
+          abortSpeak("发言权归" + (side || "对方"));        // ★ 没抢到 → 立刻闭嘴
+        }
+        return;
+      }
+      if(act === "free_deny"){
+        if(side && cfg.side && side === cfg.side) abortSpeak("未抢到发言权");
+        return;
+      }
+      /* 发言权空出来了 → 有稿才去抢 */
+      if(act === "free_idle"){
+        freeOwner = "";
+        if(freeMode) claimFree();
+        return;
+      }
+      if(ev.source === "ai" || act === "ai_done") return;
+      if(act && act !== "down") return;
+      if(freeMode) return;          // 自由辩论的按下由 free_grant 统一处理，绝不直接开口
+      if(side && cfg.side && side === cfg.side) return;      // 我方侧按钮 = 我方说完了
+      if(st()) st().textContent = "收到发令（" + (side || "按钮") + "）→ 立即发言";
+      if(!speakNow()) genRebut(true);                        // 没抢跑稿 → 直接出稿（已无判停等待）
     };
+    buzzES.onerror = ()=>{ /* EventSource 自动重连 */ };
   }catch(e){ buzzOn=false; }
 }
 function buzzAiDone(){
@@ -2311,7 +2362,7 @@ function speakNow(){
   if(playing) return true;
   if(!lastSentences.length && !queue.length) return false;
   if(!queue.length) lastSentences.forEach(t=>queue.push({text:t, el:null}));
-  preHold = false;
+  preHold = false; stopped = false;
   lastSpeakAt = Date.now();
   const st=$("speakState"); if(st) st.textContent="立即发言…";
   drain();

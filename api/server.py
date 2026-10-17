@@ -713,7 +713,7 @@ async def buzzer_publish(request: Request):
         "action": str(body.get("action") or "down"),
         "source": str(body.get("source") or "button"),
     }
-    for k in ("seat", "note"):
+    for k in ("seat", "note", "kind", "stage", "reason"):
         if body.get(k) is not None:
             ev[k] = str(body[k])[:120]
     ev["ts"] = time.time()

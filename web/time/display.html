@@ -367,6 +367,7 @@ function applyStage(){
     hintEl.textContent = "按 空格 开始计时";
   }
   render();
+  buzzPub({action:"stage", kind: st.kind, stage: S.idx});   // 让智能体知道当前是不是自由辩论
 }
 function nextStage(){
   if(S.idx >= RULES.length-1){ S.finished = true; hintEl.textContent = "全部环节结束"; return; }
@@ -425,13 +426,40 @@ function onSerialLine(line){
   }
   if(/^PING/.test(line)) sendSerial("PONG");
 }
-/* ★ 实体按钮 → 智能体发令：按下瞬间推到服务端，AI 二辩订阅后立刻开口（不经任何判停） */
-function postBuzz(sideLetter){
+/* ★ 发令总线：实体按钮 / 环节切换 / 抢话仲裁 全部走这里，智能体侧订阅后即时响应 */
+function buzzPub(payload){
   try{
     fetch("/debate/api/buzzer", {method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({side: sideLetter, action:"down", source:"button"})}).catch(()=>{});
+      body: JSON.stringify(Object.assign({source:"display"}, payload))}).catch(()=>{});
   }catch(e){}
 }
+function postBuzz(sideLetter){
+  buzzPub({side: sideLetter, action:"down", source:"button"});
+}
+/* ★ 自由辩论仲裁：AI 侧 claim 到达时，谁先占谁得。
+   有主 → free_deny（AI 该立刻闭嘴）；无主 → 授予并广播 free_grant。 */
+let buzzES = null;
+function buzzListen(){
+  if(typeof EventSource === "undefined") return;
+  try{
+    buzzES = new EventSource("/debate/api/buzzer/stream");
+    buzzES.onmessage = (m)=>{
+      let ev={}; try{ ev=JSON.parse(m.data); }catch(e){ return; }
+      if(ev.source === "display") return;                 // 自己发的，忽略
+      if(ev.action === "claim"){
+        const st = RULES[S.idx];
+        if(st.kind !== "free") { buzzPub({action:"free_deny", side:ev.side}); return; }
+        if(S.freeOwner){ buzzPub({action:"free_deny", side:ev.side}); return; }
+        const side = (ev.side === "正方") ? "pro" : "con";
+        S.freeOwner = { side, seat: side === "pro" ? 2 : 2 };   // AI 为二辩
+        setSpeaker(side, 2); startClock(); beep(1, 1040);
+        hintEl.textContent = (side==="pro"?"正方":"反方") + "二辩（AI）抢到发言";
+        buzzPub({action:"free_grant", side, source:"display"});
+      }
+    };
+  }catch(e){}
+}
+buzzListen();     // 订阅发令总线（接收 AI 的抢话申请并仲裁）
 function sendSerial(cmd){
   if(!serialWriter) return;
   const full = cmd === "BUZZ" ? "A:BUZZ\n" : cmd + "\n";
@@ -451,12 +479,18 @@ function onButton(key){
       stopClock(); S.freeOwner = null; clearLights();
       hintEl.textContent = "自由辩论 · 等待抢话";
       beep(1, 520);
+      buzzPub({action:"free_idle"});                 // 发言权空出 → 通知 AI 可抢（有稿才抢）
+    }else if(S.freeOwner){
+      /* 已有人持话 → 后按者无效，且明确告诉 AI 侧「没抢到」 */
+      beep(1, 300);
+      buzzPub({action:"free_deny", side});
     }else{
       S.freeOwner = { side, seat };
       setSpeaker(side, seat);
       // 自由辩论共用同一倒计时，抢话不重置剩余时间
       startClock(); beep(1, 1040);
       hintEl.textContent = (side==="pro"?"正方":"反方") + SEAT_NAME[seat] + " 抢到发言";
+      buzzPub({action:"free_grant", side});          // ★ AI 若没抢到会立刻闭嘴
     }
     return;
   }
