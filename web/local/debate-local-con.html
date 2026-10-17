@@ -314,6 +314,10 @@
           <div><label>抢跑启动阈值（对方累计字数）</label><input id="cfgStreamMin" type="number" value="20" min="8" max="200"></div>
           <div><label>两次抢跑最小间隔（毫秒）</label><input id="cfgStreamGap" type="number" value="7000" min="3000" max="60000" step="1000"></div>
         </div>
+        <div><label>自由辩论 · AI 让手时间 <b id="freeDelayVal">700</b> ms</label>
+          <input id="cfgFreeDelay" type="range" min="0" max="1000" step="50" value="700">
+          <div class="mini">发言权空出后，AI 先等这么久再抢；期间有人按下按钮就放弃。<b>0</b> = 抢得最快但可能垄断发言权；<b>600~800</b> 给真人留出反应时间（推荐）。</div>
+        </div>
         <div class="sw" style="margin-top:8px"><input type="checkbox" id="cfgRtAsr"> 实时识别通道（备用可选）· 边听边出字 + 服务端判停<span id="rtAsrState" class="mini"></span></div>
         <div class="sw" style="margin-top:8px"><input type="checkbox" id="cfgOmni" checked> <b>端到端出稿通道（推荐）· 首音约 1 秒，一次生成直接出声音</b>；关闭则走级联（首句需 5~18 秒）<span id="omniState" class="mini"></span></div>
         <div class="grid2">
@@ -406,7 +410,7 @@ const DEFAULTS = {
   listen:"interval", chunkMs:2500, overlapMs:800,
   asrModel:"Qwen/Qwen3-ASR-1.7B",
   autoGen:false, autoGenChars:60, autoSpeak:true, micId:"", asrFix:false,
-  streamMode:false, streamMinChars:20, streamGapMs:7000, rtAsr:false,
+streamMode:false, streamMinChars:20, streamGapMs:7000, rtAsr:false, freeClaimDelay:700,
   omni:true, omniVoice:"", omniModel:"",
   silence:700, minSeg:600, maxSeg:15000, vad:0.012, blockGapMs:8000,
   mode:"test", autoSave:true, session:"", speakGap:3500, speakCooldown:20000, audioHeal:false, model:"",
@@ -732,6 +736,8 @@ function fillSettings(){
   if($("cfgOmniModel")) $("cfgOmniModel").value=cfg.omniModel||"";
   updateOmniState();
   $("cfgStreamMin").value=cfg.streamMinChars||20; $("cfgStreamGap").value=cfg.streamGapMs||7000;
+  if($("cfgFreeDelay")){ $("cfgFreeDelay").value=(cfg.freeClaimDelay==null?700:cfg.freeClaimDelay);
+    $("freeDelayVal").textContent=(cfg.freeClaimDelay==null?700:cfg.freeClaimDelay); }
   $("cfgAutoSave").checked=!!cfg.autoSave; $("cfgMode").value=(cfg.mode==="auto")?"auto":"test";
   $("cfgSilence").value=cfg.silence; $("cfgMinSeg").value=cfg.minSeg;
   $("cfgMaxSeg").value=cfg.maxSeg; $("cfgVad").value=cfg.vad;
@@ -787,6 +793,7 @@ function saveSettings(){
   updateOmniState();
   cfg.streamMinChars = parseInt($("cfgStreamMin").value)||20;
   cfg.streamGapMs = parseInt($("cfgStreamGap").value)||7000;
+  if($("cfgFreeDelay")) cfg.freeClaimDelay = Math.max(0, Math.min(1000, parseInt($("cfgFreeDelay").value)||0));
   cfg.autoSave = $("cfgAutoSave").checked;
   cfg.mode = $("cfgMode").value || "test";
   cfg.silence = parseInt($("cfgSilence").value)||700; cfg.minSeg = parseInt($("cfgMinSeg").value)||600;
@@ -802,6 +809,8 @@ function saveSettings(){
   if(typeof refreshSummaryBadge==="function") refreshSummaryBadge();
   if(cfg.mode==="auto") ensureSession();
 }
+{ const _fd = $("cfgFreeDelay");
+  if(_fd) _fd.addEventListener("input", ()=>{ if($("freeDelayVal")) $("freeDelayVal").textContent = _fd.value; }); }
 $("btnSave").onclick = ()=>{ try{ saveSettings(); }catch(e){ alert("保存失败："+e.message); } finally { closeSettings(); } };
 $("btnTest").onclick = async ()=>{
   const base = $("cfgBase").value.trim().replace(/\/+$/,"");
