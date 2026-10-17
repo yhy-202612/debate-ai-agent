@@ -1,0 +1,31 @@
+# 辩论 AI 二辩 · 独立 Docker 栈
+# 与班级网站零数据/账号耦合：独立镜像、独立网络、独立 .env、独立密钥。
+# 仅通过外部网络 deploy_default 让班级网站 nginx 反代到 /debate/。
+services:
+  debate:
+    build: .
+    image: debate-agent:latest
+    container_name: debate-agent
+    restart: unless-stopped
+    env_file:
+      - .env
+    expose:
+      - "8000"
+    environment:
+      - DEBATE_DATA_DIR=/data
+    volumes:
+      # 全自动模式：转写文本落盘归档（宿主目录，容器重建不丢）
+      - ${DEBATE_DATA_HOST_DIR:-/var/lib/debate-agent}:/data
+    networks:
+      debate_net: {}
+      gateway:
+        aliases:
+          - debate-agent
+    # 不映射宿主端口，仅经班级网站 nginx 反代（子路径 /debate/）
+
+networks:
+  debate_net:
+    name: debate_net
+  gateway:
+    external: true
+    name: deploy_default

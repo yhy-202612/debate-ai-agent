@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 环境与密钥（只提交 .env.example）
+.env
+.env.*
+!.env.example
+
+# Node
+node_modules/
+npm-debug.log*
+
+# 采集样本（体积大，不入库）
+tools/_probe/
+web/local/test-audio.mp3
+
+# 运行时数据
+data/
+*.log
+.DS_Store

@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>辩论 AI 二辩 · 接口文档</title>
+<style>
+:root{--bg:#0d1220;--card:#131b2e;--line:#233150;--text:#e6edfb;--muted:#8b9ab8;--acc:#5b9dff}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.75 "Microsoft YaHei","PingFang SC",system-ui,sans-serif}
+.wrap{max-width:980px;margin:0 auto;padding:36px 26px 90px}
+h1{font-size:30px;margin:0 0 6px;color:#fff}
+h2{font-size:22px;margin:38px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+h3{font-size:18px;margin:26px 0 8px;color:#a9c6ff}
+p,li{color:#cfd9ee}
+blockquote{margin:16px 0;padding:10px 16px;background:#16203300;border-left:3px solid var(--acc);color:var(--muted)}
+code{background:#1b2540;padding:2px 6px;border-radius:5px;font-size:14px;color:#9dd0ff;
+  font-family:ui-monospace,Menlo,Consolas,monospace}
+pre{background:#0b1222;border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto}
+pre code{background:none;padding:0;color:#cfe3ff;font-size:13.5px;line-height:1.65}
+table{width:100%;border-collapse:collapse;margin:14px 0;font-size:14.5px}
+th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;vertical-align:top}
+th{background:#182240;color:#bcd3ff;font-weight:600}
+tr:nth-child(even) td{background:#111a2c}
+a{color:var(--acc)}
+.top{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:18px}
+.tag{font-size:13px;color:#93b8ff;border:1px solid var(--line);background:#16223a;
+  border-radius:20px;padding:4px 12px}
+.dl{margin-left:auto}
+.dl a{text-decoration:none;background:#1d4ed8;color:#fff;padding:8px 16px;border-radius:9px;font-size:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="top">
+  <span class="tag">Base: https://120.48.43.211/debate</span>
+  <span class="tag">CORS *</span>
+  <span class="tag">SSE 流式</span>
+  <span class="dl"><a href="api-doc.md" download>下载 Markdown 原文</a></span>
+</div>
+<h1>辩论 AI 二辩 · 接口文档（供其他 AI 工具调用）</h1>
+<blockquote>
+<p>版本 2026-10-17 · 服务地址 <code>https://120.48.43.211/debate</code>
+本文档面向「用别的 AI 工具（ChatGPT / Claude / 豆包 / 自写脚本）来训练或调用这个辩手」的场景。</p>
+</blockquote>
+<hr />
+<h2>一、基础信息</h2>
+<table>
+<thead>
+<tr>
+<th>项目</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Base URL</td>
+<td><code>https://120.48.43.211/debate</code></td>
+</tr>
+<tr>
+<td>HTTP 版本</td>
+<td>也支持 <code>http://120.48.43.211/debate</code>（<strong>页面在 https 下必须用 https，否则被混合内容拦截</strong>）</td>
+</tr>
+<tr>
+<td>鉴权</td>
+<td>当前<strong>无需鉴权</strong>（服务端 <code>DEBATE_ACCESS_TOKEN</code> 为空）。若日后开启，请求头带 <code>Authorization: Bearer &lt;token&gt;</code></td>
+</tr>
+<tr>
+<td>CORS</td>
+<td><code>*</code>，任意来源可直接调用</td>
+</tr>
+<tr>
+<td>流式</td>
+<td><code>POST /api/rebut</code>、<code>/api/rebut-omni</code> 返回 <code>text/event-stream</code></td>
+</tr>
+<tr>
+<td>证书</td>
+<td>自签证书，脚本里需关闭校验（<code>curl -k</code> / Python <code>verify=False</code>）</td>
+</tr>
+</tbody>
+</table>
+<p>健康检查：<code>GET /healthz</code> → <code>{"ok":true,...}</code></p>
+<hr />
+<h2>二、最常用的 4 个端点</h2>
+<h3>1) 出稿（流式驳论）<code>POST /api/rebut</code></h3>
+<p>一次性生成一段 30~60 秒的完整驳论，逐句推送。</p>
+<p><strong>请求体</strong></p>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>类型</th>
+<th>必填</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>opponent</code></td>
+<td>string</td>
+<td>✅</td>
+<td>对方原文（≤12000 字）</td>
+</tr>
+<tr>
+<td><code>our_side</code></td>
+<td>string</td>
+<td>✅</td>
+<td><code>正方</code> / <code>反方</code>（系统会按辩题自动补全为「拓展 / 消解」）</td>
+</tr>
+<tr>
+<td><code>our_case</code></td>
+<td>string</td>
+<td>✅</td>
+<td>我方立论要点（≤6000 字）</td>
+</tr>
+<tr>
+<td><code>topic</code></td>
+<td>string</td>
+<td></td>
+<td>辩题，默认「人工智能的发展会消解还是拓展人的价值」</td>
+</tr>
+<tr>
+<td><code>duration</code></td>
+<td>int</td>
+<td></td>
+<td>目标时长秒数，范围 <strong>30–60</strong>，默认 45</td>
+</tr>
+<tr>
+<td><code>model</code></td>
+<td>string</td>
+<td></td>
+<td>出稿模型 id，见 <code>GET /api/models</code>；留空用默认</td>
+</tr>
+<tr>
+<td><code>system_extra</code></td>
+<td>string</td>
+<td></td>
+<td><strong>自定义提示词</strong>（≤3000 字），追加到系统提示词最后，优先级最高。用它把 AI 调成你要的辩风</td>
+</tr>
+<tr>
+<td><code>no_strategy</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td><strong>纯净模式</strong>。<code>true</code> 时不注入辩论技法库与课堂考察口径，只保留语音合成所需的格式约束（纯口语、无 Markdown、无括号旁白、字数按时长折算）。训练版默认开启</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-bash">curl -k -N -X POST https://120.48.43.211/debate/api/rebut \
+  -H 'Content-Type: application/json' \
+  -d '{
+    &quot;topic&quot;:&quot;人工智能的发展会消解还是拓展人的价值&quot;,
+    &quot;our_side&quot;:&quot;正方&quot;,
+    &quot;our_case&quot;:&quot;AI 把重复劳动外包，让人专注创造、判断与关怀。&quot;,
+    &quot;opponent&quot;:&quot;对方说依赖算法会侵蚀判断力与创造力，人的能力会退化。&quot;,
+    &quot;duration&quot;:45
+  }'
+</code></pre>
+<p><strong>响应（SSE，每行 <code>data: {json}</code>）</strong></p>
+<table>
+<thead>
+<tr>
+<th><code>type</code></th>
+<th>含义</th>
+<th>关键字段</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>stage</code></td>
+<td>阶段进度</td>
+<td><code>stage</code>: <code>draft</code>/<code>outline</code>/<code>guard</code>/<code>factcheck</code>；<code>status</code>: <code>start</code>/<code>done</code></td>
+</tr>
+<tr>
+<td><code>sentence</code></td>
+<td><strong>一句成稿</strong>（整句推送，不是逐字）</td>
+<td><code>idx</code>、<code>text</code></td>
+</tr>
+<tr>
+<td><code>flag</code></td>
+<td>风险提示</td>
+<td><code>text</code></td>
+</tr>
+<tr>
+<td><code>warn</code></td>
+<td>非致命告警</td>
+<td><code>text</code></td>
+</tr>
+<tr>
+<td><code>done</code></td>
+<td>结束</td>
+<td><code>sentences</code>、<code>chars</code>、<code>ms</code>、<code>usage</code></td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>⚠️ 注意：本服务是<strong>按整句推送</strong>，首句约 4.5~5 秒（模型要写完整句才发）。要更快请用下面的 Omni 通道。</p>
+</blockquote>
+<h3>2) 极速应答 <code>POST /api/quick</code></h3>
+<p>两句话内的接话（人机对辩、自由辩论抢话用）。</p>
+<pre><code class="language-json">// 请求
+{&quot;question&quot;:&quot;对方说AI会让人变懒，你怎么看？&quot;,&quot;our_side&quot;:&quot;正方&quot;,&quot;our_case&quot;:&quot;…&quot;}
+// 响应
+{&quot;text&quot;:&quot;…&quot;,&quot;ms&quot;:1200}
+</code></pre>
+<h3>3) 端到端出稿（推荐，首音约 1 秒）<code>POST /api/rebut-omni</code></h3>
+<p>一次生成 → 直接出<strong>字幕 + PCM 音频</strong>，省掉独立 TTS。</p>
+<p>请求体同 <code>/api/rebut</code>，额外支持 <code>voice</code>（见 <code>GET /api/omni-status</code>）、<code>model</code>。</p>
+<p><strong>响应 SSE</strong></p>
+<table>
+<thead>
+<tr>
+<th><code>type</code></th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>text</code></td>
+<td>字幕增量（<code>delta</code>）</td>
+</tr>
+<tr>
+<td><code>audio</code></td>
+<td>音频块（<code>delta</code> = base64，<strong>24kHz / 16bit / 单声道 PCM</strong>）</td>
+</tr>
+<tr>
+<td><code>sentence</code></td>
+<td>切好的句子（结束时可拿全稿）</td>
+</tr>
+<tr>
+<td><code>done</code></td>
+<td>结束（含耗时）</td>
+</tr>
+<tr>
+<td><code>error</code></td>
+<td>失败（<code>message</code>）</td>
+</tr>
+</tbody>
+</table>
+<h3>4) 说话人归属判定 <code>POST /api/attribute</code></h3>
+<p>判断一段转写是谁说的（多人在场时用）。</p>
+<pre><code class="language-json">// 请求
+{&quot;texts&quot;:[&quot;感谢正方一辩，下面有请反方一辩。&quot;],&quot;our_side&quot;:&quot;正方&quot;,&quot;topic&quot;:&quot;…&quot;,&quot;split&quot;:true}
+// 响应
+{&quot;items&quot;:[{&quot;idx&quot;:0,&quot;who&quot;:&quot;hall&quot;,&quot;parts&quot;:[{&quot;who&quot;:&quot;hall&quot;,&quot;text&quot;:&quot;…&quot;}]}]}
+</code></pre>
+<p><code>who</code> ∈ <code>opp</code>（对方）/ <code>ours</code>（我方）/ <code>hall</code>（主席·会场）</p>
+<hr />
+<h2>三、其余端点速查</h2>
+<table>
+<thead>
+<tr>
+<th>端点</th>
+<th>方法</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/api/models</code></td>
+<td>GET</td>
+<td>可选出稿模型清单（含 <code>ready</code> 可用性）</td>
+</tr>
+<tr>
+<td><code>/api/voices</code></td>
+<td>GET</td>
+<td>TTS 音色与模型清单（<code>?model=</code> 可查某模型支持的音色）</td>
+</tr>
+<tr>
+<td><code>/api/asr-models</code></td>
+<td>GET</td>
+<td>识别模型清单</td>
+</tr>
+<tr>
+<td><code>/api/asr</code></td>
+<td>POST</td>
+<td>上传音频原始字节（<code>body</code> 为二进制，<code>?model=</code> 指定模型）→ <code>{"text":"…"}</code></td>
+</tr>
+<tr>
+<td><code>/api/tts</code></td>
+<td>POST</td>
+<td><code>{text,voice,rate,model,emotion}</code> → <code>audio/mpeg</code></td>
+</tr>
+<tr>
+<td><code>/api/tts-stream</code></td>
+<td>POST</td>
+<td>同上，流式 WAV</td>
+</tr>
+<tr>
+<td><code>/api/polish</code></td>
+<td>POST</td>
+<td><code>{text}</code> 润色一句</td>
+</tr>
+<tr>
+<td><code>/api/factcheck</code></td>
+<td>POST</td>
+<td><code>{sentences}</code> 事实核查</td>
+</tr>
+<tr>
+<td><code>/api/summarize</code></td>
+<td>POST</td>
+<td><code>{prev,recent,model}</code> → 滚动摘要（长期记忆）</td>
+</tr>
+<tr>
+<td><code>/api/should-speak</code></td>
+<td>POST</td>
+<td><code>{recent,our_side,gap_ms,tail_complete}</code> → 现在是否该我方说</td>
+</tr>
+<tr>
+<td><code>/api/transcript-save</code></td>
+<td>POST</td>
+<td><code>{session,items}</code> 存转写（≤200 条/次）</td>
+</tr>
+<tr>
+<td><code>/api/transcript-list</code></td>
+<td>GET</td>
+<td><code>?session=…&amp;limit=200</code> 读回</td>
+</tr>
+<tr>
+<td><code>/api/transcript-sessions</code></td>
+<td>GET</td>
+<td>列出全部会话</td>
+</tr>
+<tr>
+<td><code>/api/stats</code></td>
+<td>GET</td>
+<td>运行指标（出稿次数、首句耗时等）</td>
+</tr>
+<tr>
+<td><code>/api/stage/publish</code></td>
+<td>POST</td>
+<td>推「AI 正在发言」给大屏：<code>{type:"speak",side,seat,on,who}</code></td>
+</tr>
+<tr>
+<td><code>/api/stage/stream</code></td>
+<td>GET</td>
+<td>大屏订阅（SSE）</td>
+</tr>
+<tr>
+<td><code>/api/stage/state</code></td>
+<td>GET</td>
+<td>调试：订阅数 + 最近事件</td>
+</tr>
+<tr>
+<td><code>/api/asr-realtime</code></td>
+<td>WS</td>
+<td>实时识别（百炼 realtime，服务端中转）</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>四、Python 调用示例</h2>
+<pre><code class="language-python">import json, requests
+
+BASE = &quot;https://120.48.43.211/debate&quot;
+
+def rebut(opponent, our_side=&quot;正方&quot;, our_case=&quot;&quot;, duration=45):
+    &quot;&quot;&quot;流式出稿：逐句返回&quot;&quot;&quot;
+    body = {&quot;topic&quot;:&quot;人工智能的发展会消解还是拓展人的价值&quot;,
+            &quot;our_side&quot;:our_side, &quot;our_case&quot;:our_case,
+            &quot;opponent&quot;:opponent, &quot;duration&quot;:duration}
+    with requests.post(f&quot;{BASE}/api/rebut&quot;, json=body, stream=True,
+                       verify=False, timeout=180) as r:
+        r.raise_for_status()
+        for line in r.iter_lines(decode_unicode=True):
+            if not line or not line.startswith(&quot;data: &quot;):
+                continue
+            ev = json.loads(line[6:])
+            if ev[&quot;type&quot;] == &quot;sentence&quot;:
+                print(ev[&quot;idx&quot;], ev[&quot;text&quot;])
+            elif ev[&quot;type&quot;] == &quot;done&quot;:
+                break
+
+rebut(&quot;对方说AI会侵蚀人的判断力，让能力退化。&quot;,
+      our_case=&quot;AI 把重复劳动外包，人回到创造、判断与关怀。&quot;)
+</code></pre>
+<hr />
+<h2>4.5 自定义提示词 <code>system_extra</code>（训练用）</h2>
+<p>想让 AI 换一种打法，不必改服务端——直接把要求写进 <code>system_extra</code>，它会拼到系统提示词<strong>最后</strong>，权重最高，可覆盖默认的技法与风格。</p>
+<pre><code class="language-json">{
+  &quot;opponent&quot;: &quot;…&quot;, &quot;our_side&quot;: &quot;反方&quot;, &quot;our_case&quot;: &quot;…&quot;, &quot;duration&quot;: 45,
+  &quot;system_extra&quot;: &quot;每段发言必须先点出对方一个具体的逻辑漏洞，再用一个生活化反例打掉它；结尾必须留一个反问。&quot;
+}
+</code></pre>
+<p><strong>实测有效性</strong>：传入「每句话开头必须加『据我看』」这种硬约束，6/6 句全部遵循。</p>
+<p><strong>可直接抄的风格模板</strong></p>
+<table>
+<thead>
+<tr>
+<th>风格</th>
+<th>提示词要点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>犀利进攻</td>
+<td>开头一句话点出对方最要命的逻辑漏洞（说清漏在哪）→ 生活化反例打掉 → 抛出必须正面回答的反问；不罗列己方论点，只打对方最弱处</td>
+</tr>
+<tr>
+<td>稳健防守</td>
+<td>先正面接住对方核心担忧、承认合理部分 → 指出其成立前提已被我方方案消解 → 按「现象→机制→后果」分层推进</td>
+</tr>
+<tr>
+<td>幽默化解</td>
+<td>用生活类比（计算器、导航、字典、健身器械）把对方推论推到荒谬处；不攻击人，只攻击推论</td>
+</tr>
+<tr>
+<td>举例压人</td>
+<td>拒绝空泛价值判断，讲清「谁、在什么情况下、具体变好还是变坏」；不确定的数据绝不编造</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>服务端上限 3000 字，超长会被截断。该参数同样适用于 <code>/api/rebut-omni</code>（端到端通道）。</p>
+</blockquote>
+<h3>纯净模式 <code>no_strategy</code></h3>
+<p>服务端默认会额外注入两部分内容：<strong>辩论技法库</strong>（先拆地基、归谬、利弊对冲等 7 条 + 对方常见漏洞清单）与<strong>课堂考察口径</strong>（批判性思维、逻辑思维、提问数、话轮响应、论点层次、进攻总则）。这些是本站比赛版的默认设定。</p>
+<p>如果你要训练自己的打法，传 <code>"no_strategy": true</code> 把它们全部去掉，只保留：</p>
+<table>
+<thead>
+<tr>
+<th>保留项</th>
+<th>原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>纯口语、一句一行</td>
+<td>直接对接语音合成</td>
+</tr>
+<tr>
+<td>不要 Markdown / 标题 / 分点 / 表情</td>
+<td>合成会念出符号</td>
+</tr>
+<tr>
+<td>不要括号旁白（「（停顿）」）</td>
+<td>会被念出来</td>
+</tr>
+<tr>
+<td>不要「好的」「下面我来说」等过场话</td>
+<td>浪费时长、显得机器人</td>
+</tr>
+<tr>
+<td>字数按 <code>duration × 4.5~5.5</code></td>
+<td>保证说到目标时长</td>
+</tr>
+<tr>
+<td>不编造数据、不曲解对方主张</td>
+<td>事实底线</td>
+</tr>
+</tbody>
+</table>
+<p><strong>实测对比</strong>（同一辩题、<code>duration=40</code>）：</p>
+<table>
+<thead>
+<tr>
+<th>模式</th>
+<th>结果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>no_strategy: true</code></td>
+<td>7 句 / 208 字，无设问句，纯按输入内容反驳</td>
+</tr>
+<tr>
+<td><code>no_strategy: false</code>（默认）</td>
+<td>4 句，强制含「请问对方…」设问句，按技法主线推进</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>五、数据分离（重要）</h2>
+<p>两方训练数据<strong>必须隔离</strong>，规则如下：</p>
+<table>
+<thead>
+<tr>
+<th>阵营</th>
+<th>会话前缀</th>
+<th>存放位置</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>正方</td>
+<td><code>pro-…</code></td>
+<td>服务端 <code>transcript-save</code> 的 <code>session</code> 字段</td>
+</tr>
+<tr>
+<td>反方</td>
+<td><code>con-…</code></td>
+<td>同上</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li>调用方<strong>自己指定 <code>session</code></strong>，只读写自己的前缀；<code>transcript-sessions</code> 会列出全部，按前缀自行过滤。</li>
+<li>前端两版（正方版 / 反方训练版）已分别使用 <code>debate_local_*</code> 与 <code>debate_con_*</code> 作为 localStorage 命名空间，互不可见。</li>
+<li>建议外部工具每次训练用一个新 session：<code>con-&lt;你的工具名&gt;-&lt;时间戳&gt;</code>。</li>
+</ul>
+<hr />
+<h2>六、训练对方 AI 的建议用法</h2>
+<ol>
+<li><strong>喂对方立论 → 拿我方驳论</strong>：把对面（正方）的立论原文放进 <code>opponent</code>，<code>our_side</code> 传 <code>反方</code>，得到针对性驳论。</li>
+<li><strong>循环对练</strong>：把上一轮 AI 的输出当作 <code>opponent</code> 再发一次，形成多轮攻防。</li>
+<li><strong>只练反应速度</strong>：用 <code>/api/quick</code>，每次 1~2 句，适合练接话。</li>
+<li><strong>练立论</strong>：把 <code>our_case</code> 写细（3 个论点 + 论据），<code>duration</code> 调 60，出稿会更完整。</li>
+<li><strong>判自己写得好不好</strong>：<code>/api/factcheck</code> 查事实，<code>/api/polish</code> 润色表达。</li>
+</ol>
+<blockquote>
+<p>提示：<code>our_side</code> 传「反方」时，系统会按辩题自动理解为<strong>主张「消解人的价值」</strong>，不需要你自己解释立场。</p>
+</blockquote>
+<hr />
+<h2>七、常见问题</h2>
+<p><strong>Q：返回 401？</strong> 服务端目前未开启口令；若开启，加 <code>Authorization: Bearer &lt;token&gt;</code>。</p>
+<p><strong>Q：首句要等 5 秒？</strong> 那是级联通道（<code>/api/rebut</code>）。要更快用 <code>/api/rebut-omni</code>（首音约 1 秒）。</p>
+<p><strong>Q：脚本报证书错误？</strong> 自签证书，<code>curl -k</code> 或 <code>verify=False</code>。</p>
+<p><strong>Q：为什么 <code>/api/rebut</code> 的 <code>duration</code> 限制 30–60？</strong> 对应 30 秒与 60 秒两种发言时长；45 秒约出 250~300 字。</p>
+</div></body></html>
