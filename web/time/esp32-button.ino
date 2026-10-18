@@ -10,7 +10,7 @@
  * 接线（默认引脚，可按需改）：
  *   按钮1  —— GPIO 4   —— 另一端接 GND
  *   按钮2  —— GPIO 5   —— 另一端接 GND
- *   蜂鸣器 —— GPIO 18  —— 有源蜂鸣器，正极接 18，负极接 GND
+ *   蜂鸣器 —— GPIO 18  —— 可选；没有蜂鸣器就置 HAS_BUZZER 0，改用板载 LED 提示
  *   （用 INPUT_PULLUP，按下读到 LOW）
  *
  * 通信协议（115200，USB 串口，每行一条，\n 结尾）：
@@ -20,9 +20,12 @@
  */
 
 #define BOARD        'A'      // ★ 正方侧填 'A'，反方侧填 'B'
+#define HAS_BUZZER   0        // 1=接了有源蜂鸣器；0=没有，用开发板自带 LED 提示
+#define HAS_LED      1        // 1=用板载 LED（多数 ESP32 开发板是 GPIO2）
 const int BTN1   = 4;
 const int BTN2   = 5;
 const int BUZZER = 18;
+const int LED    = 2;
 const unsigned long DEBOUNCE_MS = 15;
 
 struct Btn {
@@ -48,9 +51,13 @@ void report(int idx, bool pressed) {
 }
 
 void buzz(unsigned int ms) {
-  digitalWrite(BUZZER, HIGH);
-  delay(ms);
-  digitalWrite(BUZZER, LOW);
+#if HAS_BUZZER
+  digitalWrite(BUZZER, HIGH); delay(ms); digitalWrite(BUZZER, LOW);
+#endif
+#if HAS_LED
+  digitalWrite(LED, LOW); delay(ms); digitalWrite(LED, HIGH);   // 板载 LED 低电平点亮
+#endif
+  if (!HAS_BUZZER && !HAS_LED) delay(ms);
 }
 
 void setup() {
@@ -60,6 +67,9 @@ void setup() {
   pinMode(BTN2, INPUT_PULLUP);
   pinMode(BUZZER, OUTPUT);
   digitalWrite(BUZZER, LOW);
+#if HAS_LED
+  pinMode(LED, OUTPUT); digitalWrite(LED, HIGH);
+#endif
   Serial.print("READY ");
   Serial.println(BOARD);
 }

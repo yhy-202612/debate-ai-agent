@@ -96,6 +96,21 @@ const on=id=>win.document.getElementById(id).classList.contains("on");
   ok("★超时自愈：残留的「正在发言」自动收起", !$("seat-con-2").classList.contains("speaking"));
   ok("超时后底部清空", $("talkState").textContent === "", $("talkState").textContent);
 
+  // ── WiFi 版按钮（不接电脑）：服务器转回的 down 事件 → 与大屏本地按钮同一套逻辑 ──
+  const es2 = win.__es.find(e=>/buzzer\/stream/.test(e.url));
+  ok("已订阅发令总线（WiFi 按钮用）", !!es2, es2 && es2.url);
+  win.eval("S.idx=7; applyStage();"); await sleep(120);   // 自由辩论
+  ok("自由辩论：初始无灯", !on("seat-pro-1") && !on("seat-con-1"));
+  es2.onmessage({data: JSON.stringify({action:"down", side:"正方", seat:"1", source:"button", board:"A"})});
+  await sleep(150);
+  ok("★WiFi 按钮 → 正方一辩亮灯（等同本地按键）", on("seat-pro-1"));
+  es2.onmessage({data: JSON.stringify({action:"down", side:"反方", seat:"1", source:"button", board:"B"})});
+  await sleep(150);
+  ok("★WiFi 按钮：对方持话时不得插话（灯不变）", on("seat-pro-1") && !on("seat-con-1"));
+  es2.onmessage({data: JSON.stringify({action:"ai_done", side:"正方", source:"ai"})});
+  await sleep(150);
+  ok("★AI 说完 → 释放发言权（灯灭，可再抢）", !on("seat-pro-1"));
+
   console.log(`\n结果：${pass} 通过 / ${fail} 失败`);
   process.exit(fail?1:0);
 })();

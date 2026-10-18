@@ -679,6 +679,10 @@ async def stage_state():
 # 这条链路绕开了所有判停逻辑：按下即发令，不再等静默、不再调 should-speak、不看冷却。
 _buzz_clients: set[asyncio.Queue] = set()
 _buzz_last: dict = {}
+# ── 事件序号 + 短历史：供 WiFi 按钮板「长轮询」拿下行指令（蜂鸣器提示）──
+_buzz_seq: int = 0
+_buzz_history: list[dict] = []          # 最近 80 条，带 seq
+BUZZ_HISTORY_MAX = 80
 
 
 def _norm_side(v) -> str:
@@ -726,10 +730,16 @@ async def buzzer_publish(request: Request):
         "action": str(body.get("action") or "down"),
         "source": str(body.get("source") or "button"),
     }
-    for k in ("seat", "note", "kind", "stage", "reason"):
+    for k in ("seat", "note", "kind", "stage", "reason", "board"):
         if body.get(k) is not None:
             ev[k] = str(body[k])[:120]
     ev["ts"] = time.time()
+    global _buzz_seq
+    _buzz_seq += 1
+    ev["seq"] = _buzz_seq
+    _buzz_history.append(ev)
+    if len(_buzz_history) > BUZZ_HISTORY_MAX:
+        del _buzz_history[:len(_buzz_history) - BUZZ_HISTORY_MAX]
     _buzz_last.clear(); _buzz_last.update(ev)
     n = 0
     for q in list(_buzz_clients):
@@ -742,7 +752,36 @@ async def buzzer_publish(request: Request):
 
 @app.get("/api/buzzer/state")
 async def buzzer_state():
-    return {"ok": True, "clients": len(_buzz_clients), "last": _buzz_last}
+    return {"ok": True, "clients": len(_buzz_clients), "last": _buzz_last, "seq": _buzz_seq}
+
+
+@app.get("/api/buzzer/poll")
+async def buzzer_poll(after: int = 0, board: str = "", timeout: float = 20.0):
+    """WiFi 按钮板长轮询下行指令（ESP32 用；不占 SSE 通道）。
+
+    - after: 板子最后收到的事件序号，只返回 seq > after 的事件
+    - timeout: 最长挂起秒数（默认 20s，建议板子略大于此值）
+    返回 {"ok":true,"seq":最新,"events":[...]}；events 只含「非本板发出」的事件，
+    供板子判断要不要响蜂鸣器（例如 source=ai / action=ai_done → 提示该按按钮了）。
+    """
+    deadline = time.time() + max(0.0, min(30.0, timeout))
+    me = str(board or "").strip().upper()
+    while True:
+        evs = []
+        cur = 0
+        for e in _buzz_history:
+            if int(e.get("seq") or 0) <= after:
+                continue
+            cur = max(cur, int(e.get("seq") or 0))
+            src_board = str(e.get("board") or "").upper()
+            if me and src_board and src_board == me:
+                continue                      # 自己发出去的，不通知自己
+            evs.append(e)
+        if evs:
+            return {"ok": True, "seq": cur or _buzz_seq, "events": evs}
+        if time.time() >= deadline:
+            return {"ok": True, "seq": _buzz_seq, "events": []}
+        await asyncio.sleep(0.15)
 
 
 if WEB_DIR.exists():

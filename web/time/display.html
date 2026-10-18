@@ -459,8 +459,18 @@ function buzzListen(){
     buzzES.onmessage = (m)=>{
       let ev={}; try{ ev=JSON.parse(m.data); }catch(e){ return; }
       if(ev.source === "display") return;                 // 自己发的，忽略
+      if(ev.action === "down" && ev.source === "button" && ev.board){
+        /* ★ WiFi 版按钮（不接电脑）：服务器转回来的按下事件 → 与大屏本地按钮走同一套逻辑
+           （灯、计时、自由辩论仲裁都照常），但不再回发 down，避免死循环 */
+        const sd = (ev.side === "pro" || ev.side === "正方") ? "pro" : "con";
+        const seatNum = parseInt(ev.seat || "1") || 1;
+        onSeat(sd, seatNum);
+        return;
+      }
       if(ev.action === "ai_done"){
-        /* AI 发言结束：自由辩论 → 释放发言权（可继续抢）；其它环节 → 交回本环节真人方 */
+        /* AI 发言结束 → 电脑音箱"嘀"一声提醒真人：轮到你了（无需任何硬件） */
+        try{ beep(1, 660); }catch(e){}
+        /* 自由辩论 → 释放发言权（可继续抢）；其它环节 → 交回本环节真人方 */
         const st = RULES[S.idx];
         if(st.kind === "free"){
           const minePro = (ev.side === "反方" || ev.side === "con") ? "con" : "pro";
@@ -498,7 +508,10 @@ function sendSerial(cmd){
 function onButton(key){
   const who = BTN_MAP[key]; if(!who) return;
   const [side, seatStr] = who.split("-");
-  const seat = parseInt(seatStr);
+  onSeat(side, parseInt(seatStr));
+}
+/* 按下某侧某辩位的按钮：本地串口按钮与 WiFi 按钮共用同一套逻辑 */
+function onSeat(side, seat){
   const st = RULES[S.idx];
 
   if(st.kind === "free"){
@@ -583,7 +596,8 @@ function showHelp(){
        Web Serial 才可用（直接双击 file:// 打开时按钮接口不可用，但键盘与鼠标仍可用）。
        用本机 http 打开时同样不可用，请改用 https 入口。</p>
     <p><b>配套程序下载</b>：
-       <a href="esp32-button.ino" download>ESP32 按钮程序（esp32-button.ino）</a> ·
+       <a href="esp32-button.ino" download>ESP32 按钮程序 · USB 版（esp32-button.ino）</a> ·
+       <a href="esp32-button-wifi.ino" download>ESP32 按钮程序 · WiFi 版（esp32-button-wifi.ino）</a> ·
        <a href="start-screen.bat" download>本地启动脚本（start-screen.bat）</a> ·
        <a href="使用说明.md" download>完整使用说明（使用说明.md）</a></p>
     <p style="color:var(--muted)">赛制依据 2026-10-16 筹备会纪要：立论 3′×2、质询 1.5′×2、人人对辩 2.5′、
