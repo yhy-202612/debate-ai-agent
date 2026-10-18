@@ -326,6 +326,11 @@ function beep(times=1, freq=880, dur=0.12){
 /* ---------- 计时主循环 ---------- */
 function startClock(){
   if(S.running || S.finished) return;
+  { const st0 = RULES[S.idx];
+    if(st0 && st0.kind !== "free"){
+      /* 计时开始 = 本环节正式发言开始 → 发言人即环节默认方（自由辩论另走 free_grant） */
+      buzzPub({action:"floor", who: st0.side, seat: st0.seat, stage: S.idx, reason:"stage-start"});
+    } }
   S.running = true;
   const t0 = Date.now(), base = S.remain;
   clearInterval(S.tick);
@@ -342,7 +347,9 @@ function startClock(){
   render();
 }
 function stopClock(){
+  const wasRunning = S.running;
   S.running = false; clearInterval(S.tick); S.tick = null; render();
+  if(wasRunning) buzzPub({action:"floor", who:"hall", stage:S.idx, reason:"stage-stop"});
 }
 function finishStage(){
   markOver();
@@ -368,7 +375,9 @@ function applyStage(){
     hintEl.textContent = "按 空格 开始计时";
   }
   render();
-  buzzPub({action:"stage", kind: st.kind, stage: S.idx});   // 让智能体知道当前是不是自由辩论
+  /* 让智能体知道：①当前环节类型（是否自由辩论）②本环节默认发言方 ③过渡期默认主席 */
+  buzzPub({action:"stage", kind: st.kind, stage: S.idx, side: st.side, seat: st.seat,
+           target: st.target || null, floor: "hall", name: st.name});
 }
 function nextStage(){
   if(S.idx >= RULES.length-1){ S.finished = true; hintEl.textContent = "全部环节结束"; return; }
@@ -435,7 +444,10 @@ function buzzPub(payload){
   }catch(e){}
 }
 function postBuzz(sideLetter){
-  buzzPub({side: sideLetter, action:"down", source:"button"});
+  /* 统一协议：side 一律用 pro / con（原来发板号 A/B，智能体侧无法与「正方/反方」比对） */
+  const side = (sideLetter === "A" || sideLetter === "pro") ? "pro" : "con";
+  const st = RULES[S.idx];
+  buzzPub({side, action:"down", source:"button", stage:S.idx, kind:st?st.kind:""});
 }
 /* ★ 自由辩论仲裁：AI 侧 claim 到达时，谁先占谁得。
    有主 → free_deny（AI 该立刻闭嘴）；无主 → 授予并广播 free_grant。 */
@@ -447,6 +459,22 @@ function buzzListen(){
     buzzES.onmessage = (m)=>{
       let ev={}; try{ ev=JSON.parse(m.data); }catch(e){ return; }
       if(ev.source === "display") return;                 // 自己发的，忽略
+      if(ev.action === "ai_done"){
+        /* AI 发言结束：自由辩论 → 释放发言权（可继续抢）；其它环节 → 交回本环节真人方 */
+        const st = RULES[S.idx];
+        if(st.kind === "free"){
+          const minePro = (ev.side === "反方" || ev.side === "con") ? "con" : "pro";
+          if(!S.freeOwner || S.freeOwner.side === minePro){
+            S.freeOwner = null; stopClock(); clearLights();
+            hintEl.textContent = "自由辩论 · 等待抢话";
+            buzzPub({action:"free_idle", stage:S.idx});
+          }
+        }else{
+          const back = (st.side === "both") ? "pro" : st.side;
+          buzzPub({action:"floor", who: back, seat: st.seat, stage:S.idx, reason:"ai-done"});
+        }
+        return;
+      }
       if(ev.action === "claim"){
         const st = RULES[S.idx];
         if(st.kind !== "free") { buzzPub({action:"free_deny", side:ev.side}); return; }
@@ -506,6 +534,8 @@ function onButton(key){
     stopClock(); hintEl.textContent = "发言结束（已暂停计时）";
   }else{
     setSpeaker(side, seat); startClock();
+    /* 按钮按下 = 该侧真人开始发言（质询环节里被质询方回答也走这里） */
+    buzzPub({action:"floor", who: side, seat, stage: S.idx, reason:"button"});
     hintEl.textContent = (side==="pro"?"正方":"反方") + SEAT_NAME[seat] + " 开始发言";
   }
 }

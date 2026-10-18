@@ -27,15 +27,7 @@ a{color:var(--acc)}
 .dl{margin-left:auto}
 .dl a{text-decoration:none;background:#1d4ed8;color:#fff;padding:8px 16px;border-radius:9px;font-size:14px}
 </style>
-</head>
-<body>
-<div class="wrap">
-<div class="top">
-  <span class="tag">Base: https://120.48.43.211/debate</span>
-  <span class="tag">CORS *</span>
-  <span class="tag">SSE 流式</span>
-  <span class="dl"><a href="api-doc.md" download>下载 Markdown 原文</a></span>
-</div>
+<div class="doc">
 <h1>辩论 AI 二辩 · 接口文档（供其他 AI 工具调用）</h1>
 <blockquote>
 <p>版本 2026-10-17 · 服务地址 <code>https://120.48.43.211/debate</code>
@@ -467,6 +459,23 @@ rebut(&quot;对方说AI会侵蚀人的判断力，让能力退化。&quot;,
 </tbody>
 </table>
 <hr />
+<h2>4.6 发言人判定：流程驱动（推荐）</h2>
+<p>有大屏与实体按钮时，发言人由流程直接给出，无需调用 <code>/api/attribute</code>。</p>
+<p>大屏广播到 <code>POST /api/buzzer</code> 的事件（<code>source:"display"</code>）：</p>
+<pre><code class="language-json">{&quot;action&quot;:&quot;stage&quot;,&quot;kind&quot;:&quot;cross&quot;,&quot;stage&quot;:5,&quot;side&quot;:&quot;con&quot;,&quot;seat&quot;:1,
+ &quot;target&quot;:{&quot;side&quot;:&quot;pro&quot;,&quot;seat&quot;:2},&quot;floor&quot;:&quot;hall&quot;,&quot;name&quot;:&quot;人机对辩 ① …&quot;}
+{&quot;action&quot;:&quot;floor&quot;,&quot;who&quot;:&quot;con&quot;,&quot;seat&quot;:1,&quot;stage&quot;:5,&quot;reason&quot;:&quot;stage-start&quot;}
+{&quot;action&quot;:&quot;floor&quot;,&quot;who&quot;:&quot;hall&quot;,&quot;stage&quot;:5,&quot;reason&quot;:&quot;stage-stop&quot;}
+{&quot;action&quot;:&quot;down&quot;,&quot;side&quot;:&quot;con&quot;,&quot;stage&quot;:5,&quot;kind&quot;:&quot;cross&quot;,&quot;source&quot;:&quot;button&quot;}
+{&quot;action&quot;:&quot;free_grant&quot;,&quot;side&quot;:&quot;pro&quot;,&quot;stage&quot;:7}
+{&quot;action&quot;:&quot;free_idle&quot;,&quot;stage&quot;:7}
+</code></pre>
+<ul>
+<li><code>side</code> / <code>who</code> 统一用 <code>pro</code> / <code>con</code>（智能体侧也兼容 <code>正方</code> / <code>反方</code> / <code>A</code> / <code>B</code>）</li>
+<li>切环节瞬间 <code>floor:"hall"</code> —— 环节之间的间隙按主席处理</li>
+<li>智能体侧开关：<code>floorMode</code>（默认开）走流程判定；<code>attr</code>（默认关）仍可调 <code>/api/attribute</code> 做 AI 判定</li>
+<li>未收到任何大屏信息时自动回退到 <code>/api/attribute</code></li>
+</ul>
 <h2>五、数据分离（重要）</h2>
 <p>两方训练数据<strong>必须隔离</strong>，规则如下：</p>
 <table>

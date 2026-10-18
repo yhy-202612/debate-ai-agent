@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>人机辩论赛 · 大屏计时与指示</title>
+<style>
+  :root{
+    --bg:#070b16; --panel:#101a30; --line:#1e2d4d;
+    --pro:#2f7dff; --con:#ff5a4d; --ok:#22c55e; --warn:#f5a623; --dead:#ef4444;
+    --text:#e8eefc; --muted:#7d8bab;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{
+    background:radial-gradient(1200px 700px at 50% -10%,#132241 0%,var(--bg) 60%);
+    color:var(--text);font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif;
+    display:flex;flex-direction:column;overflow:hidden;user-select:none;
+  }
+  header{padding:14px 28px 8px;display:flex;align-items:center;gap:18px;border-bottom:1px solid var(--line)}
+  .topic{font-size:26px;font-weight:700;letter-spacing:.5px;flex:1;min-width:0;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .topic small{font-weight:400;color:var(--muted);font-size:17px;margin-left:10px}
+  .stage-no{font-size:15px;color:var(--muted);border:1px solid var(--line);border-radius:8px;padding:5px 11px}
+  .stage-no b{color:var(--text);font-size:17px}
+
+  main{flex:1;display:grid;grid-template-columns:1fr 1.15fr 1fr;gap:18px;padding:16px 28px;min-height:0}
+  .side{background:linear-gradient(180deg,#0e1830,#0b1324);border:1px solid var(--line);
+    border-radius:18px;padding:16px 18px;display:flex;flex-direction:column;gap:12px;min-height:0}
+  .side.pro{border-color:#20437a;box-shadow:inset 0 0 40px rgba(47,125,255,.08)}
+  .side.con{border-color:#7a2f28;box-shadow:inset 0 0 40px rgba(255,90,77,.08)}
+  .side h2{margin:0;font-size:22px;display:flex;align-items:center;gap:10px}
+  .side.pro h2{color:#8fc0ff}.side.con h2{color:#ffb0a8}
+  .side h2 .badge{font-size:13px;font-weight:400;color:var(--muted);border:1px solid var(--line);
+    border-radius:6px;padding:2px 8px}
+  .seats{display:flex;flex-direction:column;gap:9px;flex:1;justify-content:center}
+  .seat{display:flex;align-items:center;gap:13px;padding:11px 14px;border-radius:13px;
+    background:#0a1120;border:1px solid #16223c;transition:.15s}
+  .seat .led{width:26px;height:26px;border-radius:50%;background:#1d2740;
+    box-shadow:inset 0 0 8px #000;flex:0 0 auto;transition:.12s}
+  .seat .nm{font-size:19px;color:#b9c7e4}
+  .seat .sub{font-size:13px;color:var(--muted);margin-left:auto}
+  .seat.on{background:#0f1c33}
+  .seat.on .nm{color:#fff;font-weight:700}
+  .side.pro .seat.on{border-color:#2f7dff}
+  .side.pro .seat.on .led{background:var(--pro);box-shadow:0 0 22px var(--pro),0 0 46px rgba(47,125,255,.55)}
+  .side.con .seat.on{border-color:#ff5a4d}
+  .side.con .seat.on .led{background:var(--con);box-shadow:0 0 22px var(--con),0 0 46px rgba(255,90,77,.55)}
+  .seat.warn .led{animation:blink .5s steps(2,end) infinite}
+  .side.pro .seat.warn .led{background:var(--pro)}
+  .side.con .seat.warn .led{background:var(--con)}
+  .seat.over .led{background:var(--dead);box-shadow:0 0 18px var(--dead)}
+  @keyframes blink{50%{opacity:.18}}
+
+  /* ★AI 二辩正在发言（由智能体经服务端事件推送） */
+  .seat.speaking{position:relative}
+  .seat.speaking::after{content:"";position:absolute;inset:-1px;border-radius:14px;
+    border:2px solid currentColor;pointer-events:none;animation:spk 1.1s ease-in-out infinite}
+  .side.pro .seat.speaking::after{border-color:#6ea8ff;box-shadow:0 0 28px rgba(47,125,255,.8)}
+  .side.con .seat.speaking::after{border-color:#ff8b80;box-shadow:0 0 28px rgba(255,90,77,.8)}
+  .seat.speaking .led{animation:blink .62s steps(2,end) infinite}
+  .seat.speaking .nm{color:#fff;font-weight:700}
+  .seat.speaking .sub{color:#fff;font-weight:700}
+  @keyframes spk{0%,100%{opacity:.35;transform:scale(1)}50%{opacity:1;transform:scale(1.014)}}
+
+  .center{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-height:0}
+  .stage-name{font-size:30px;font-weight:700;text-align:center;line-height:1.25;min-height:38px}
+  .clock{font-size:clamp(84px,15vw,210px);font-weight:800;line-height:1;
+    font-variant-numeric:tabular-nums;letter-spacing:2px;text-shadow:0 0 60px rgba(80,140,255,.28)}
+  .clock.low{color:var(--warn)}.clock.crit{color:var(--dead);animation:pulse .7s ease-in-out infinite}
+  @keyframes pulse{50%{opacity:.55}}
+  .clock.paused{opacity:.45}
+  .bar{width:100%;height:10px;border-radius:6px;background:#152039;overflow:hidden;margin-top:6px}
+  .bar i{display:block;height:100%;width:100%;background:linear-gradient(90deg,#3d7dff,#6ea8ff);transition:width .2s linear}
+  .hint{font-size:15px;color:var(--muted);text-align:center;min-height:22px}
+
+  footer{padding:10px 28px 16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;border-top:1px solid var(--line)}
+  button{background:#16233c;color:var(--text);border:1px solid #26375c;border-radius:10px;
+    padding:9px 16px;font-size:15px;cursor:pointer;transition:.15s;font-family:inherit}
+  button:hover{background:#1e2f4f;border-color:#3a5285}
+  button.primary{background:#1d4ed8;border-color:#2f6bff}
+  button.primary:hover{background:#2563eb}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  .spacer{flex:1}
+  .stat{font-size:13px;color:var(--muted)}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:#55607a;margin-right:6px;vertical-align:middle}
+  .dot.ok{background:var(--ok);box-shadow:0 0 10px var(--ok)}
+  .dot.err{background:var(--dead)}
+  .prog{display:flex;gap:4px}
+  .prog i{width:22px;height:6px;border-radius:3px;background:#1b2740}
+  .prog i.done{background:#2f7dff}.prog i.now{background:#6ea8ff}
+  .modal{position:fixed;inset:0;background:rgba(4,8,16,.86);display:none;align-items:center;
+    justify-content:center;padding:40px;z-index:9}
+  .modal.show{display:flex}
+  .modal .box{background:#0e1730;border:1px solid var(--line);border-radius:16px;
+    padding:26px 30px;max-width:760px;width:100%;max-height:86vh;overflow:auto}
+  .modal h3{margin:0 0 12px;font-size:22px}
+  .modal p,.modal li{color:#b9c7e4;font-size:15px;line-height:1.75}
+  .modal kbd{background:#1b2740;border:1px solid #2b3d61;border-radius:5px;padding:1px 7px;font-size:13px}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="topic">人工智能的发展 <span style="color:var(--muted)">·</span> 会消解还是拓展人的价值
+    <small>人机辩论赛 · 正方（积极） / 反方（消极）</small></div>
+  <div class="stage-no">环节 <b id="stageNo">1</b> / <span id="stageTotal">10</span></div>
+</header>
+
+<main>
+  <section class="side pro">
+    <h2>正方 <span class="badge">拓展人的价值</span></h2>
+    <div class="seats" id="seatsPro"></div>
+  </section>
+
+  <section class="center">
+    <div class="stage-name" id="stageName">正方一辩 · 立论</div>
+    <div class="clock" id="clock">03:00</div>
+    <div class="bar"><i id="barFill"></i></div>
+    <div class="hint" id="hint">按 空格 开始计时</div>
+  </section>
+
+  <section class="side con">
+    <h2>反方 <span class="badge">消解人的价值</span></h2>
+    <div class="seats" id="seatsCon"></div>
+  </section>
+</main>
+
+<footer>
+  <button class="primary" id="btnStart">开始 / 暂停（空格）</button>
+  <button id="btnNext">下一环节（→）</button>
+  <button id="btnPrev">上一环节（←）</button>
+  <button id="btnReset">重置本环节（R）</button>
+  <button id="btnSerial">连接开发板</button>
+  <button id="btnHelp">说明（H）</button>
+  <div class="spacer"></div>
+  <div class="prog" id="prog"></div>
+  <div class="stat"><span class="dot" id="dotSerial"></span><span id="serialState">开发板未连接</span></div>
+  <div class="stat" id="talkState" style="color:#6ea8ff;font-weight:700;min-width:150px"></div>
+</footer>
+
+<div class="modal" id="modal"><div class="box" id="modalBox"></div></div>
+
+<script>
+/* ============================================================
+   大屏辩论显示 + 计时 + 指示灯 + 开发板按钮
+   —— 灯全部由本页虚拟灯代替硬件灯；硬件只需按钮（2 块 ESP32，共 4 个）
+   ============================================================ */
+
+/* ---------- 赛制（依据 2026-10-16 筹备会纪要定稿） ---------- */
+const RULES = [
+  { name:"正方一辩 · 立论",            side:"pro", seat:1, sec:180, kind:"forced" },
+  { name:"反方一辩 · 立论",            side:"con", seat:1, sec:180, kind:"forced" },
+  { name:"质询 · 正方三辩 → 反方一辩",  side:"pro", seat:3, sec:90,  kind:"quiz", target:{side:"con",seat:1} },
+  { name:"质询 · 反方三辩 → 正方一辩",  side:"con", seat:3, sec:90,  kind:"quiz", target:{side:"pro",seat:1} },
+  { name:"人人对辩 · 一辩对一辩",       side:"both", seat:0, sec:150, kind:"duel" },
+  { name:"人机对辩 ① · 正方一辩 vs 反方二辩(AI)", side:"pro", seat:1, sec:180, kind:"cross", target:{side:"con",seat:2} },
+  { name:"人机对辩 ② · 反方一辩 vs 正方二辩(AI)", side:"con", seat:1, sec:180, kind:"cross", target:{side:"pro",seat:2} },
+  { name:"自由辩论",                    side:"both", seat:0, sec:120, kind:"free" },
+  { name:"反方三辩 · 结辩",             side:"con", seat:3, sec:150, kind:"forced" },
+  { name:"正方三辩 · 结辩",             side:"pro", seat:3, sec:150, kind:"forced" },
+];
+
+const SEAT_NAME = { 1:"一辩", 2:"二辩（AI）", 3:"三辩" };
+const WARN_SEC = 10;      // 最后多少秒开始闪烁
+const BEEP_AT  = [30, 10, 0];   // 在这些秒数触发提示音
+
+/* ---------- 状态 ---------- */
+const S = {
+  idx: 0,
+  remain: RULES[0].sec,
+  running: false,
+  tick: null,
+  lastBeep: null,
+  freeOwner: null,      // 自由辩论：当前持话方 {side,seat}
+  finished: false,
+};
+
+/* ---------- DOM ---------- */
+const $ = id => document.getElementById(id);
+const clockEl = $("clock"), stageNameEl = $("stageName"), hintEl = $("hint");
+const barFill = $("barFill"), stageNoEl = $("stageNo"), progEl = $("prog");
+$("stageTotal").textContent = RULES.length;
+
+/* 生成 6 盏灯（每方 3 位；二辩为 AI，同样有一盏） */
+function buildSeats(){
+  ["pro","con"].forEach(side=>{
+    const box = $(side==="pro" ? "seatsPro" : "seatsCon");
+    box.innerHTML = "";
+    [1,2,3].forEach(seat=>{
+      const d = document.createElement("div");
+      d.className = "seat"; d.id = `seat-${side}-${seat}`;
+      d.innerHTML = `<span class="led"></span><span class="nm">${SEAT_NAME[seat]}</span>
+        <span class="sub">${seat===2 ? "AI·程序" : (seat===1?"按钮①":"按钮②")}</span>`;
+      // 点击座位 = 手动置为发言者（兜底用）
+      d.onclick = ()=> setSpeaker(side, seat, true);
+      box.appendChild(d);
+    });
+  });
+}
+buildSeats();
+
+const seatEl = (side, seat)=> $(`seat-${side}-${seat}`);
+
+/* ---------- 灯控 ---------- */
+function clearLights(){
+  document.querySelectorAll(".seat").forEach(el=>el.classList.remove("on","warn","over"));
+}
+function setSpeaker(side, seat, manual){
+  clearLights();
+  if(!side || !seat) return;
+  const el = seatEl(side, seat); if(!el) return;
+  el.classList.add("on");
+  // 质询/对辩：被质询的一方也点亮（次级）
+  const st = RULES[S.idx];
+  if(st && st.target){
+    const t = seatEl(st.target.side, st.target.seat);
+    if(t && !(st.target.side===side && st.target.seat===seat)) t.classList.add("on");
+  }
+}
+function markWarn(on){
+  document.querySelectorAll(".seat.on").forEach(el=>el.classList.toggle("warn", !!on));
+}
+function markOver(){
+  document.querySelectorAll(".seat.on").forEach(el=>{ el.classList.remove("warn"); el.classList.add("over"); });
+}
+
+/* ---------- 渲染 ---------- */
+function fmt(sec){
+  sec = Math.max(0, Math.round(sec));
+  const m = Math.floor(sec/60), s = sec%60;
+  return String(m).padStart(2,"0") + ":" + String(s).padStart(2,"0");
+}
+function render(){
+  const st = RULES[S.idx];
+  stageNameEl.textContent = st.name;
+  clockEl.textContent = fmt(S.remain);
+  clockEl.classList.toggle("paused", !S.running && S.remain < st.sec && S.remain > 0);
+  clockEl.classList.toggle("low", S.remain <= 30 && S.remain > 10);
+  clockEl.classList.toggle("crit", S.remain <= 10);
+  barFill.style.width = Math.max(0, S.remain / st.sec * 100) + "%";
+  stageNoEl.textContent = S.idx + 1;
+  progEl.innerHTML = RULES.map((_,i)=>`<i class="${i<S.idx?"done":(i===S.idx?"now":"")}"></i>`).join("");
+  markWarn(S.remain <= WARN_SEC && S.remain > 0 && S.running);
+}
+
+/* ---------- 与智能体联动：AI 二辩发言 → 点亮并脉冲对应辩位 ----------
+   智能体前端在开始/结束播报时 POST /api/stage/publish，
+   本页订阅 SSE /api/stage/stream（两台电脑也能联动）。
+   ★支持双方 AI 同时接入：按「side-seat」独立记账，互不覆盖；
+     每个发言状态 90 秒自动过期，避免页面中途关闭导致状态残留。 */
+let stageES = null;
+const TALK = {};                 // "pro-2" -> {until, who}
+const TALK_TTL = 90000;
+
+function clearTalk(side, seat){
+  delete TALK[side + "-" + seat];
+  const el = seatEl(side, seat);
+  if(!el) return;
+  el.classList.remove("speaking");
+  const sub = el.querySelector(".sub");
+  if(sub && sub.dataset.orig !== undefined){ sub.textContent = sub.dataset.orig; delete sub.dataset.orig; }
+}
+function setStageSpeaking(side, seat, on, who){
+  side = side || "pro"; seat = Number(seat) || 2;
+  if(!on){
+    clearTalk(side, seat); refreshTalkBar(); return;
+  }
+  TALK[side + "-" + seat] = {until: Date.now() + TALK_TTL, who: who || "AI 二辩"};
+  const el = seatEl(side, seat);
+  if(el){
+    el.classList.add("speaking");
+    const sub = el.querySelector(".sub");
+    if(sub){
+      if(sub.dataset.orig === undefined) sub.dataset.orig = sub.textContent;
+      sub.textContent = "正在发言";
+    }
+  }
+  refreshTalkBar();
+}
+function refreshTalkBar(){
+  const now = Date.now();
+  Object.keys(TALK).forEach(k=>{
+    if(TALK[k].until <= now){
+      const i = k.lastIndexOf("-");
+      clearTalk(k.slice(0, i), k.slice(i + 1));
+    }
+  });
+  const arr = Object.entries(TALK);
+  const tl = $("talkState");
+  if(tl) tl.textContent = arr.length ? ("🎙 " + arr.map(([,v]) => v.who).join("、") + " 发言中") : "";
+}
+setInterval(refreshTalkBar, 1000);   // 过期自愈：AI 掉线/页面关闭时不会永久卡住「正在发言」
+
+function connectStageBus(){
+  if(!/^https?:/.test(location.protocol) || stageES) return;
+  try{
+    stageES = new EventSource("/debate/api/stage/stream");
+    stageES.onmessage = e=>{
+      let ev; try{ ev = JSON.parse(e.data); }catch(_){ return; }
+      if(ev.type !== "speak") return;
+      setStageSpeaking(ev.side || "pro", Number(ev.seat) || 2, !!ev.on, ev.who);
+    };
+    /* 断线由 EventSource 自动重连；重连后服务端会补发未过期的最新状态 */
+  }catch(e){}
+  buzzListen();          // 同时订阅发令总线（接收 AI 的抢话申请并仲裁）
+}
+
+/* ---------- 提示音 ---------- */
+let audioCtx = null;
+function beep(times=1, freq=880, dur=0.12){
+  try{
+    audioCtx = audioCtx || new (window.AudioContext||window.webkitAudioContext)();
+    for(let i=0;i<times;i++){
+      const t = audioCtx.currentTime + i*0.18;
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.type="sine"; o.frequency.value=freq;
+      g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.28,t+0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+      o.connect(g); g.connect(audioCtx.destination); o.start(t); o.stop(t+dur+0.02);
+    }
+  }catch(e){}
+  sendSerial("BUZZ");
+}
+
+/* ---------- 计时主循环 ---------- */
+function startClock(){
+  if(S.running || S.finished) return;
+  { const st0 = RULES[S.idx];
+    if(st0 && st0.kind !== "free"){
+      /* 计时开始 = 本环节正式发言开始 → 发言人即环节默认方（自由辩论另走 free_grant） */
+      buzzPub({action:"floor", who: st0.side, seat: st0.seat, stage: S.idx, reason:"stage-start"});
+    } }
+  S.running = true;
+  const t0 = Date.now(), base = S.remain;
+  clearInterval(S.tick);
+  S.tick = setInterval(()=>{
+    S.remain = base - (Date.now()-t0)/1000;
+    const secLeft = Math.ceil(S.remain);
+    if(BEEP_AT.includes(secLeft) && S.lastBeep !== secLeft && S.remain < RULES[S.idx].sec){
+      S.lastBeep = secLeft;
+      beep(secLeft===0 ? 3 : 1, secLeft===0 ? 440 : 880);
+    }
+    render();
+    if(S.remain <= 0){ stopClock(); finishStage(); }
+  }, 100);
+  render();
+}
+function stopClock(){
+  const wasRunning = S.running;
+  S.running = false; clearInterval(S.tick); S.tick = null; render();
+  if(wasRunning) buzzPub({action:"floor", who:"hall", stage:S.idx, reason:"stage-stop"});
+}
+function finishStage(){
+  markOver();
+  hintEl.textContent = "时间到";
+  setTimeout(()=>{ if(!S.finished) nextStage(); }, 1600);
+}
+
+/* ---------- 环节切换 ---------- */
+function applyStage(){
+  const st = RULES[S.idx];
+  S.remain = st.sec; S.lastBeep = null; S.freeOwner = null;
+  stopClock(); clearLights();
+  if(st.kind === "free"){
+    hintEl.textContent = "自由辩论 · 按按钮抢话（按两次=开始/结束）";
+  }else if(st.kind === "duel"){
+    hintEl.textContent = "双向对辩 · 轮流发言";
+    setSpeaker(st.side === "both" ? "pro" : st.side, 1);
+  }else if(st.kind === "cross"){
+    setSpeaker(st.side, st.seat);
+    hintEl.textContent = "交叉对辩 · 人与对方 AI 直接交锋";
+  }else{
+    setSpeaker(st.side, st.seat);
+    hintEl.textContent = "按 空格 开始计时";
+  }
+  render();
+  /* 让智能体知道：①当前环节类型（是否自由辩论）②本环节默认发言方 ③过渡期默认主席 */
+  buzzPub({action:"stage", kind: st.kind, stage: S.idx, side: st.side, seat: st.seat,
+           target: st.target || null, floor: "hall", name: st.name});
+}
+function nextStage(){
+  if(S.idx >= RULES.length-1){ S.finished = true; hintEl.textContent = "全部环节结束"; return; }
+  S.idx++; applyStage(); beep(1, 660);
+}
+function prevStage(){ if(S.idx>0){ S.idx--; applyStage(); } }
+function resetStage(){ S.finished=false; applyStage(); }
+
+/* ---------- 开发板（Web Serial） ---------- */
+let serialPort = null, serialReader = null, serialWriter = null;
+const BTN_MAP = { "A1":"pro-1", "A2":"pro-3", "B1":"con-1", "B2":"con-3" }; // 每块板 2 个按钮
+
+function setSerialState(txt, cls){
+  $("serialState").textContent = txt;
+  $("dotSerial").className = "dot" + (cls ? " "+cls : "");
+}
+async function connectSerial(){
+  if(!("serial" in navigator)){
+    setSerialState("浏览器不支持（需 Chrome/Edge + http://localhost 或 https）", "err");
+    beep(2, 300); return;
+  }
+  try{
+    serialPort = await navigator.serial.requestPort();
+    await serialPort.open({ baudRate: 115200 });
+    serialWriter = serialPort.writable.getWriter();
+    setSerialState("已连接（115200）", "ok");
+    beep(1, 1200);
+    readSerial();
+  }catch(e){ setSerialState("连接失败：" + (e.message||e), "err"); }
+}
+async function readSerial(){
+  const dec = new TextDecoderStream();
+  serialPort.readable.pipeTo(dec.writable).catch(()=>{});
+  serialReader = dec.readable.getReader();
+  let buf = "";
+  try{
+    while(true){
+      const { value, done } = await serialReader.read();
+      if(done) break;
+      buf += value;
+      let i;
+      while((i = buf.indexOf("\n")) >= 0){
+        const line = buf.slice(0, i).trim(); buf = buf.slice(i+1);
+        if(line) onSerialLine(line);
+      }
+    }
+  }catch(e){}
+  setSerialState("已断开");
+}
+function onSerialLine(line){
+  // 协议：A1:D / A1:U（按下/松开）；板号 A=正方侧、B=反方侧
+  const m = line.match(/^([AB])(\d):([DU])$/);
+  if(m){
+    const key = m[1] + m[2];
+    if(m[3] === "D"){ onButton(key); postBuzz(m[1]); }   // 按下即向智能体发令（A=正方侧 / B=反方侧）
+  }
+  if(/^PING/.test(line)) sendSerial("PONG");
+}
+/* ★ 发令总线：实体按钮 / 环节切换 / 抢话仲裁 全部走这里，智能体侧订阅后即时响应 */
+function buzzPub(payload){
+  try{
+    fetch("/debate/api/buzzer", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify(Object.assign({source:"display"}, payload))}).catch(()=>{});
+  }catch(e){}
+}
+function postBuzz(sideLetter){
+  /* 统一协议：side 一律用 pro / con（原来发板号 A/B，智能体侧无法与「正方/反方」比对） */
+  const side = (sideLetter === "A" || sideLetter === "pro") ? "pro" : "con";
+  const st = RULES[S.idx];
+  buzzPub({side, action:"down", source:"button", stage:S.idx, kind:st?st.kind:""});
+}
+/* ★ 自由辩论仲裁：AI 侧 claim 到达时，谁先占谁得。
+   有主 → free_deny（AI 该立刻闭嘴）；无主 → 授予并广播 free_grant。 */
+let buzzES = null;
+function buzzListen(){
+  if(typeof EventSource === "undefined") return;
+  try{
+    buzzES = new EventSource("/debate/api/buzzer/stream");
+    buzzES.onmessage = (m)=>{
+      let ev={}; try{ ev=JSON.parse(m.data); }catch(e){ return; }
+      if(ev.source === "display") return;                 // 自己发的，忽略
+      if(ev.action === "ai_done"){
+        /* AI 发言结束：自由辩论 → 释放发言权（可继续抢）；其它环节 → 交回本环节真人方 */
+        const st = RULES[S.idx];
+        if(st.kind === "free"){
+          const minePro = (ev.side === "反方" || ev.side === "con") ? "con" : "pro";
+          if(!S.freeOwner || S.freeOwner.side === minePro){
+            S.freeOwner = null; stopClock(); clearLights();
+            hintEl.textContent = "自由辩论 · 等待抢话";
+            buzzPub({action:"free_idle", stage:S.idx});
+          }
+        }else{
+          const back = (st.side === "both") ? "pro" : st.side;
+          buzzPub({action:"floor", who: back, seat: st.seat, stage:S.idx, reason:"ai-done"});
+        }
+        return;
+      }
+      if(ev.action === "claim"){
+        const st = RULES[S.idx];
+        if(st.kind !== "free") { buzzPub({action:"free_deny", side:ev.side}); return; }
+        if(S.freeOwner){ buzzPub({action:"free_deny", side:ev.side}); return; }
+        const side = (ev.side === "正方") ? "pro" : "con";
+        S.freeOwner = { side, seat: side === "pro" ? 2 : 2 };   // AI 为二辩
+        setSpeaker(side, 2); startClock(); beep(1, 1040);
+        hintEl.textContent = (side==="pro"?"正方":"反方") + "二辩（AI）抢到发言";
+        buzzPub({action:"free_grant", side, source:"display"});
+      }
+    };
+  }catch(e){}
+}
+function sendSerial(cmd){
+  if(!serialWriter) return;
+  const full = cmd === "BUZZ" ? "A:BUZZ\n" : cmd + "\n";
+  try{ serialWriter.write(new TextEncoder().encode(full)); }catch(e){}
+}
+
+/* ---------- 按钮 → 抢话/计时 ---------- */
+function onButton(key){
+  const who = BTN_MAP[key]; if(!who) return;
+  const [side, seatStr] = who.split("-");
+  const seat = parseInt(seatStr);
+  const st = RULES[S.idx];
+
+  if(st.kind === "free"){
+    // 自由辩论：第一次按=抢到（亮灯+开始计时），同一人再按=结束
+    if(S.freeOwner && S.freeOwner.side===side && S.freeOwner.seat===seat){
+      stopClock(); S.freeOwner = null; clearLights();
+      hintEl.textContent = "自由辩论 · 等待抢话";
+      beep(1, 520);
+      buzzPub({action:"free_idle"});                 // 发言权空出 → 通知 AI 可抢（有稿才抢）
+    }else if(S.freeOwner && S.freeOwner.side !== side){
+      /* 对方正在说 → 不得插话（一次一人），明确回一条「没抢到」 */
+      beep(1, 300);
+      buzzPub({action:"free_deny", side});
+    }else if(S.freeOwner){
+      /* 同侧换人（一辩↔三辩）→ 交接，发言权仍在本方 */
+      S.freeOwner = { side, seat };
+      setSpeaker(side, seat);
+      hintEl.textContent = (side==="pro"?"正方":"反方") + SEAT_NAME[seat] + " 接话";
+      beep(1, 880);
+      buzzPub({action:"free_grant", side});
+    }else{
+      S.freeOwner = { side, seat };
+      setSpeaker(side, seat);
+      // 自由辩论共用同一倒计时，抢话不重置剩余时间
+      startClock(); beep(1, 1040);
+      hintEl.textContent = (side==="pro"?"正方":"反方") + SEAT_NAME[seat] + " 抢到发言";
+      buzzPub({action:"free_grant", side});          // ★ AI 若没抢到会立刻闭嘴
+    }
+    return;
+  }
+  // 其它环节：按钮 = 发言开始/结束（兼计时）
+  if(S.running && seatEl(side,seat)?.classList.contains("on")){
+    stopClock(); hintEl.textContent = "发言结束（已暂停计时）";
+  }else{
+    setSpeaker(side, seat); startClock();
+    /* 按钮按下 = 该侧真人开始发言（质询环节里被质询方回答也走这里） */
+    buzzPub({action:"floor", who: side, seat, stage: S.idx, reason:"button"});
+    hintEl.textContent = (side==="pro"?"正方":"反方") + SEAT_NAME[seat] + " 开始发言";
+  }
+}
+// 键盘兜底：1/2 = 正方两个按钮，3/4 = 反方两个按钮
+const KEY_MAP = { "1":"A1", "2":"A2", "3":"B1", "4":"B2" };
+
+/* ---------- 交互绑定 ---------- */
+$("btnStart").onclick = ()=> S.running ? stopClock() : (S.finished ? resetStage() : startClock());
+$("btnNext").onclick  = ()=> nextStage();
+$("btnPrev").onclick  = ()=> prevStage();
+$("btnReset").onclick = ()=> resetStage();
+$("btnSerial").onclick= ()=> connectSerial();
+$("btnHelp").onclick  = ()=> showHelp();
+
+document.addEventListener("keydown", e=>{
+  if(e.target.tagName === "INPUT") return;
+  const k = e.key;
+  if(k === " "){ e.preventDefault(); $("btnStart").click(); }
+  else if(k === "ArrowRight" || k === "Enter"){ e.preventDefault(); nextStage(); }
+  else if(k === "ArrowLeft"){ prevStage(); }
+  else if(k === "r" || k === "R"){ resetStage(); }
+  else if(k === "h" || k === "H"){ showHelp(); }
+  else if(k === "f" || k === "F"){ toggleFullscreen(); }
+  else if(KEY_MAP[k]){ onButton(KEY_MAP[k]); }
+});
+function toggleFullscreen(){
+  if(document.fullscreenElement) document.exitFullscreen();
+  else document.documentElement.requestFullscreen?.();
+}
+
+/* ---------- 说明 ---------- */
+function showHelp(){
+  $("modalBox").innerHTML = `
+    <h3>使用说明</h3>
+    <p><b>空格</b> 开始/暂停计时　<b>→ / Enter</b> 下一环节　<b>←</b> 上一环节　
+       <b>R</b> 重置本环节　<b>F</b> 全屏　<b>H</b> 本说明</p>
+    <p><b>按钮（开发板）</b>：每块 ESP32 接 2 个按钮，板号 A=正方侧、B=反方侧。
+       串口协议：<kbd>A1:D</kbd> 按下 / <kbd>A1:U</kbd> 松开，115200 波特率；
+       电脑回发 <kbd>A:BUZZ</kbd> 让蜂鸣器响。</p>
+    <p><b>没有开发板时</b>：可用键盘 <kbd>1</kbd><kbd>2</kbd>（正方两个按钮）、
+       <kbd>3</kbd><kbd>4</kbd>（反方两个按钮）模拟抢话；也可直接点击左右两侧的辩位卡片手动置灯。</p>
+    <p><b>灯的规则</b>：该发言的一方灯亮；最后 ${WARN_SEC} 秒闪烁；时间到转红并自动进入下一环节；
+       自由辩论谁抢到谁亮，同一人再按一次结束。</p>
+    <p><b>注意</b>：浏览器要用 Chrome / Edge，且页面必须以 <kbd>https</kbd> 或 <kbd>http://localhost</kbd> 打开，
+       Web Serial 才可用（直接双击 file:// 打开时按钮接口不可用，但键盘与鼠标仍可用）。
+       用本机 http 打开时同样不可用，请改用 https 入口。</p>
+    <p><b>配套程序下载</b>：
+       <a href="esp32-button.ino" download>ESP32 按钮程序（esp32-button.ino）</a> ·
+       <a href="start-screen.bat" download>本地启动脚本（start-screen.bat）</a> ·
+       <a href="使用说明.md" download>完整使用说明（使用说明.md）</a></p>
+    <p style="color:var(--muted)">赛制依据 2026-10-16 筹备会纪要：立论 3′×2、质询 1.5′×2、人人对辩 2.5′、
+       人机对辩 3′×2、自由辩论 2′、结辩 2.5′×2。</p>
+    <p style="text-align:right;margin-top:18px"><button onclick="document.getElementById('modal').classList.remove('show')">关闭</button></p>`;
+  $("modal").classList.add("show");
+}
+$("modal").onclick = e=>{ if(e.target.id === "modal") e.target.classList.remove("show"); };
+
+/* ---------- 启动 ---------- */
+applyStage();
+render();
+connectStageBus();                                     // 订阅智能体发言事件（HTTP 打开时生效）
+setInterval(()=>{ if(S.running) render(); }, 200);   // 闪烁状态跟随
+/* 若是从 file:// 打开，提示无法用串口 */
+if(!("serial" in navigator)){
+  setSerialState("开发板接口不可用（需 http://localhost 打开）", "err");
+}
+</script>
+</body>
+</html>

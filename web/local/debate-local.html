@@ -132,7 +132,8 @@
   </section>
 
   <section class="card">
-    <h2>🤖 AI 二辩（服务端出稿 + 播报）<span class="r" id="speakState">待命</span></h2>
+    <h2>🤖 AI 二辩（服务端出稿 + 播报）<span class="r" id="speakState">待命</span>
+      <span class="r" id="floorState" style="margin-left:8px;font-weight:400;color:#667085">发言人：未确定</span></h2>
     <div class="row">
       <button class="b-blue" id="btnGen">生成驳论</button>
       <button class="b-ghost" id="btnPlayAll" disabled>▶ 播报全文</button>
@@ -260,6 +261,8 @@
           <div class="sw" style="align-self:end;margin-top:16px"><input type="checkbox" id="cfgHpf" checked> 录音降噪增强（高通去低频+增益）</div>
           <div class="sw" style="align-self:end;margin-top:16px"><input type="checkbox" id="cfgStreamTts" checked> 流式播报（边合成边播）</div>
           <div class="sw" style="align-self:end;margin-top:16px"><input type="checkbox" id="cfgDiarize"> 说话人分离自动归属（需把识别模型选为「说话人分离」）</div>
+          <div class="sw" style="margin-top:8px"><input type="checkbox" id="cfgFloorMode" checked> <b>按赛制流程判定发言人（推荐）</b>：用大屏环节 + 实体按钮回传直接确定「现在谁在说」，不再让 AI 猜；环节切换间隙默认主席<span class="mini"></span></div>
+          <div class="sw" style="margin-top:8px"><input type="checkbox" id="cfgAttr"> 用 AI 识别发言方（/api/attribute）· 关闭可省调用与延迟，仅在流程信息缺失时才有必要开启</div>
         </div>
         <div class="hint">「说话人分离自动归属」：识别结果带「1: / 2:」说话人编号时，首次点击标注谁是对方/我方，之后同一编号自动归属，省去逐段大模型判定；未选分离模型时自动回退为模型判定。</div>
         <details style="margin-top:10px">
@@ -384,6 +387,7 @@ const DEFAULTS = {
   asrModel:"Qwen/Qwen3-ASR-1.7B",
   autoGen:false, autoGenChars:60, autoSpeak:true, micId:"", asrFix:false,
   streamMode:false, streamMinChars:20, streamGapMs:7000, rtAsr:false, freeClaimDelay:700,
+  floorMode:true, attr:false,
   omni:true, omniVoice:"", omniModel:"",
   silence:700, minSeg:600, maxSeg:15000, vad:0.012, blockGapMs:8000,
   mode:"test", autoSave:true, session:"", speakGap:3500, speakCooldown:20000, audioHeal:false, model:"",
@@ -700,6 +704,8 @@ function fillSettings(){
   $("cfgAutoChars").value=cfg.autoGenChars;
   $("cfgSpeakGap").value=cfg.speakGap; $("cfgSpeakCooldown").value=cfg.speakCooldown;
   if($("cfgAudioHeal")) $("cfgAudioHeal").checked = cfg.audioHeal===true;
+  if($("cfgFloorMode")) $("cfgFloorMode").checked = cfg.floorMode!==false;
+  if($("cfgAttr")) $("cfgAttr").checked = cfg.attr===true;
   $("cfgStreamMode").checked=!!cfg.streamMode;
   if($("cfgRtAsr")) $("cfgRtAsr").checked=!!cfg.rtAsr;
   if($("cfgOmni")) $("cfgOmni").checked=!!cfg.omni;
@@ -754,6 +760,8 @@ function saveSettings(){
   cfg.speakGap = parseInt($("cfgSpeakGap").value)||3500;
   cfg.speakCooldown = parseInt($("cfgSpeakCooldown").value)||20000;
   cfg.audioHeal = !!(($("cfgAudioHeal")||{}).checked);
+  cfg.floorMode = $("cfgFloorMode") ? $("cfgFloorMode").checked : (cfg.floorMode!==false);
+  cfg.attr = $("cfgAttr") ? $("cfgAttr").checked : !!cfg.attr;
   cfg.streamMode = $("cfgStreamMode").checked;
   cfg.rtAsr = $("cfgRtAsr") ? $("cfgRtAsr").checked : !!cfg.rtAsr;
   cfg.omni = $("cfgOmni") ? $("cfgOmni").checked : !!cfg.omni;
@@ -941,6 +949,39 @@ let lastPlayEndAt=0;   // 上一次我方播报「结束」时刻（固定冷却
    待对方说完/主席点名，preHold 解除立即放出。用于消掉 LLM 的首字等待。 */
 let preHold=false, lastStreamAt=0, streamAtOppChars=0;
 let preAudioBuf=[];   // Omni 抢跑期间缓存的 PCM 块（说完后一次性放出）
+/* ══ 发言人状态（floor）：由大屏流程 + 实体按钮驱动，不再靠 ASR 去「猜谁在说」 ══
+   来源优先级：环节切换（过渡期=主席）→ 计时开始（=本环节发言方）→ 按钮/抢话仲裁（实时覆盖）
+   归属优先级：声纹已映射 > 识别发言方开关（AI 判定） > 本 floor */
+let floorWho = "";        // "ours" | "opp" | "hall" | "both" | ""
+let floorSrc = "";        // 来源标记，仅用于界面提示
+let curStage = -1, curKind = "", curStageSide = "";   // 大屏回传的环节信息
+const FLOOR_LABEL = { ours:"我方", opp:"对方", hall:"主席 / 环节过渡", both:"双方（未定）", "":"未确定" };
+function sideWho(side){          // "pro"|"con"|"正方"|"反方"|"A"|"B" → ours/opp
+  const s = String(side||""); let p = "";
+  if(s==="pro"||s==="正方"||s==="A") p = "pro";
+  else if(s==="con"||s==="反方"||s==="B") p = "con";
+  else return "";
+  return p === ((cfg.side==="正方") ? "pro" : "con") ? "ours" : "opp";
+}
+function setFloor(who, src){
+  if(!who) return;
+  if(who==="pro"||who==="con"||who==="正方"||who==="反方"||who==="A"||who==="B") who = sideWho(who);
+  floorWho = who; floorSrc = src || "";
+  const el = $("floorState");
+  if(el){
+    el.textContent = "发言人：" + (FLOOR_LABEL[who] || who);
+    el.style.color = who==="opp" ? "#b42318" : who==="ours" ? "#067647" : "#667085";
+  }
+}
+/* 流程/按钮给出的归属之外，仍有一条极轻量的主席兜底：
+   「感谢正方一辩，下面有请反方二辩」这类串场语即使落在辩手时段也必须记为会场，
+   否则主席的话会被当成对方发言、触发误接话。纯正则，零调用。 */
+function looksChair(t){
+  const x = String(t||"").trim();
+  if(!x) return false;
+  if(/我方认为|我方坚持|我方主张|我们认为|对方辩友|贵方|你方观点|我方的/.test(x)) return false;
+  return /^(感谢|谢谢主席|谢谢双方|下面|接下来|有请|本场|时间到|进入第|各位评委|双方辩手|现在有请|请双方)/.test(x);
+}
 /* 归属判定失败时的兜底：跟随上一片的归属（避免整场都停在「会场」而永不触发发言） */
 function followPrevWho(rec){
   const prev = transcript[transcript.length-2];
@@ -970,6 +1011,26 @@ async function ingest(raw, segs){
     rec.spk = spk;
     if(mappedWho){ rec.who = mappedWho; renderStream(); }
     else { notePendingSpeaker(spk, newRaw); }
+  }
+  /* ── 归属三分支 ────────────────────────────────────────────────
+     ①声纹标签已映射 → 直接用；
+     ②「识别发言方」开关（cfg.attr）开 → 调 /api/attribute（原逻辑，保留为可选项）；
+     ③否则（默认）→ 直接按流程 floor 落归属，零调用、零延迟。 */
+  /* 没连大屏（从未收到环节/发言人信息）时，流程驱动无从谈起 → 自动回退到 AI 识别，
+     否则会「一片都归会场、AI 永不接话」。这是单机/离线场景的安全阀。 */
+  const haveFlow = (curStage >= 0) || !!floorWho;
+  const useAttr = !!cfg.attr || !haveFlow;
+  if(!mappedWho && !useAttr){
+    const byFloor = (cfg.floorMode === false) ? "" : floorWho;
+    if(byFloor === "ours" || byFloor === "opp"){
+      rec.who = looksChair(newRaw) ? "hall" : byFloor;
+      renderStream(); saveTranscript([{text:rec.text, who:rec.who}]);
+      if(rec.who === "opp"){ scheduleSpeakCheck(); maybeStreamPregenerate(); }
+      return;
+    }
+    // floor 为「主席/过渡期」或未收到大屏信息 → 一律记会场（绝不误当成对方去接话）
+    rec.who = "hall"; renderStream(); saveTranscript([{text:rec.text, who:rec.who}]);
+    return;
   }
   if(!mappedWho){
     try{
@@ -1029,6 +1090,8 @@ function maybeStreamPregenerate(){
 
 /* 「对方是否正在发言」：尾部是对方片段即算；若尾部是主席串场，看它之前是不是对方。 */
 function streamOppTalking(){
+  /* 流程模式下发言人是确定事实，直接采信（过渡期=主席，不算对方在说） */
+  if(cfg.floorMode !== false && floorWho) return floorWho === "opp";
   const segs = transcript.slice(-6);
   if(!segs.length) return false;
   const t = segs[segs.length-1];
@@ -1595,6 +1658,7 @@ function stopMic(){
   stopWatchdog();
   rtAsrStop();                                         // 关闭实时通道（备用）
   preHold=false; lastStreamAt=0; streamAtOppChars=0;   // 清理流式抢跑状态
+  floorWho=""; floorSrc="";                            // 重新倾听时发言人状态归零
   try{ clearTimeout(speakTimer); }catch(e){}
   try{ if(procNode){procNode.disconnect(); procNode.onaudioprocess=null;} }catch(e){}
   try{ if(hpNode) hpNode.disconnect(); }catch(e){}
@@ -2268,16 +2332,30 @@ function buzzStart(){
       let ev={}; try{ ev=JSON.parse(m.data); }catch(e){ return; }
       const act = ev.action || "", side = ev.side || "";
       const st = ()=>$("speakState");
-      /* 大屏广播环节类型 → 决定当前是不是自由辩论抢话环节 */
+      /* 大屏广播环节类型 → ①是否自由辩论 ②环节过渡期发言权默认归主席 */
       if(act === "stage"){
         const was = freeMode; freeMode = (ev.kind === "free"); freeOwner = "";
+        curStage = (typeof ev.stage === "number") ? ev.stage : curStage;
+        curKind  = ev.kind || "";
+        curStageSide = ev.side || "";
+        /* ★环节切换的间隙必然是主席串场 → floor 默认主席，等「计时开始/按钮/抢话」再落到具体一方 */
+        setFloor("hall", "stage");
         if(freeMode && !was && st()) st().textContent = "自由辩论：等待抢话（有稿才抢）";
+        return;
+      }
+      /* ★流程/按钮回传的当前发言人（新链路主通道） */
+      if(act === "floor"){
+        const w = ev.who || "";
+        if(w === "hall") setFloor("hall", ev.reason||"flow");
+        else if(w === "both") setFloor("both", ev.reason||"flow");
+        else setFloor(sideWho(w), ev.reason||"flow");
         return;
       }
       /* 仲裁结果：谁抢到了发言权 */
       if(act === "free_grant"){
         freeOwner = side;
-        if(side && cfg.side && side === cfg.side){
+        setFloor(sideWho(side), "free");
+        if(sideWho(side) === "ours"){
           if(lastSentences.length || queue.length) speakNow();
           else if(st()) st().textContent = "抢到发言权，但稿子还没生成 → 本次不参与";
         }else{
@@ -2286,12 +2364,13 @@ function buzzStart(){
         return;
       }
       if(act === "free_deny"){
-        if(side && cfg.side && side === cfg.side) abortSpeak("未抢到发言权");
+        setFloor(sideWho(side), "free");
+        if(sideWho(side) === "ours") abortSpeak("未抢到发言权");
         return;
       }
       /* 发言权空出来了 → 有稿才去抢 */
       if(act === "free_idle"){
-        freeOwner = "";
+        freeOwner = ""; setFloor("hall", "free-idle");
         /* ★ AI 让手：人按按钮有 200~300ms 反应时间，AI 若即时抢会几乎必胜、垄断发言权。
            这里刻意等一手（默认 700ms），期间若有人抢到（freeOwner 被赋值）就放弃。 */
         if(freeMode){
@@ -2302,8 +2381,10 @@ function buzzStart(){
       }
       if(ev.source === "ai" || act === "ai_done") return;
       if(act && act !== "down") return;
+      /* 按钮按下 = 该侧真人开始发言（非自由辩论） */
+      if(!freeMode) setFloor(sideWho(side), "button");
       if(freeMode) return;          // 自由辩论的按下由 free_grant 统一处理，绝不直接开口
-      if(side && cfg.side && side === cfg.side) return;      // 我方侧按钮 = 我方说完了
+      if(sideWho(side) === "ours") return;                   // 我方侧按钮 = 我方说完了
       if(st()) st().textContent = "收到发令（" + (side || "按钮") + "）→ 立即发言";
       if(!speakNow()) genRebut(true);                        // 没抢跑稿 → 直接出稿（已无判停等待）
     };
@@ -2313,6 +2394,8 @@ function buzzStart(){
 function buzzAiDone(){
   if(Date.now()-buzzAiDoneAt < 800) return;
   buzzAiDoneAt = Date.now();
+  /* 我方说完 → 发言权交回：自由辩论=空出（可再抢），其它环节=对方/主席过渡 */
+  if(cfg.floorMode !== false) setFloor(freeMode ? "hall" : "opp", "ai-done");
   try{
     fetch(api("/api/buzzer"), {method:"POST", headers:authHeaders({"Content-Type":"application/json"}),
       body: JSON.stringify({side:cfg.side||"", action:"ai_done", source:"ai"})}).catch(()=>{});

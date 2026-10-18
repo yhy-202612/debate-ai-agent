@@ -207,6 +207,27 @@ rebut("对方说AI会侵蚀人的判断力，让能力退化。",
 
 ---
 
+## 4.6 发言人判定：流程驱动（推荐）
+
+有大屏与实体按钮时，发言人由流程直接给出，无需调用 `/api/attribute`。
+
+大屏广播到 `POST /api/buzzer` 的事件（`source:"display"`）：
+
+```json
+{"action":"stage","kind":"cross","stage":5,"side":"con","seat":1,
+ "target":{"side":"pro","seat":2},"floor":"hall","name":"人机对辩 ① …"}
+{"action":"floor","who":"con","seat":1,"stage":5,"reason":"stage-start"}
+{"action":"floor","who":"hall","stage":5,"reason":"stage-stop"}
+{"action":"down","side":"con","stage":5,"kind":"cross","source":"button"}
+{"action":"free_grant","side":"pro","stage":7}
+{"action":"free_idle","stage":7}
+```
+
+- `side` / `who` 统一用 `pro` / `con`（智能体侧也兼容 `正方` / `反方` / `A` / `B`）
+- 切环节瞬间 `floor:"hall"` —— 环节之间的间隙按主席处理
+- 智能体侧开关：`floorMode`（默认开）走流程判定；`attr`（默认关）仍可调 `/api/attribute` 做 AI 判定
+- 未收到任何大屏信息时自动回退到 `/api/attribute`
+
 ## 五、数据分离（重要）
 
 两方训练数据**必须隔离**，规则如下：
