@@ -181,6 +181,36 @@ def side_note(side: str, topic: str = "") -> str:
     return s or "正方（支持辩题所陈述的观点）"
 
 
+# ── 我方队友已用素材检测：避免 AI 二辩与真人队友撞例子 ────────────────────────
+# 转写里带「我方」的行 = 我方一辩/三辩已经说过的话。命中下列关键词即视为「已用过」，
+# 交给模型排除，确保二辩的发言永远有信息增量。
+MATERIAL_KEYS = ["AlphaFold", "两亿", "雨辰", "京东", "彭青云", "众神之战", "破亿",
+                 "相机", "写实肖像", "织工", "蒸汽机", "计算器", "神笔马良", "马良", "工业革命"]
+
+
+def used_materials(text: str) -> list[str]:
+    """从场上转写中提取「我方队友已经用过的论据/案例」关键词。"""
+    used: list[str] = []
+    for line in (text or "").split("\n"):
+        if "我方" not in line and "ours" not in line.lower():
+            continue
+        for k in MATERIAL_KEYS:
+            if k in line and k not in used:
+                used.append(k)
+    return used
+
+
+def _no_repeat_note(text: str) -> str:
+    """拼一段「请勿重复队友素材」的提示（无命中时提示模型自行比对）。"""
+    used = used_materials(text)
+    if used:
+        return ("\n\n【本场我方队友已用过的素材 · 请勿重复】" + "、".join(used) +
+                "\n这些内容我方队友已经讲过，你再讲一遍就是浪费发言时间。"
+                "请换其它论据，或换一个角度把队友的话往深里推（一句话带过即可）。")
+    return ("\n\n【本场我方队友尚未使用论据库中的案例】\n你可以用论据库，但只用一个，"
+            "把更多篇幅留给拆解对方的前提与追问。")
+
+
 def _aug(prompt: str, memory: str = "") -> str:
     """在提示词后追加「本场长期记忆」与辩论知识库（DEBATE_KB=off 时不追加）。"""
     parts = [prompt]
@@ -542,6 +572,7 @@ class Engine:
         prompt = _aug(prompts.render(
             tpl, duration=eff_sec, lo=lo, hi=hi,
             topic=topic, our_side=our_side, our_case=our_case, opponent=opponent), memory)
+        prompt += _no_repeat_note(opponent)
         if not continuation and chunk_sec:
             prompt += prompts.CHUNK_NOTE.format(sec=eff_sec, lo=int(lo), hi=int(hi))
         if continuation:

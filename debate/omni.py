@@ -121,7 +121,14 @@ async def rebut_stream_omni(*, opponent: str, our_side: str, our_case: str,
     instructions = build_instructions(our_side=our_side, our_case=our_case,
                                       duration=duration, memory=memory, extra=system_extra,
                                       no_strategy=no_strategy, continuation=continuation)
-    task = f"【辩题】{topic}\n【对方刚刚的发言】\n{opponent}\n\n请按上面的要求，直接说出你的反驳。"
+    # ★与队友去重：我方一辩/三辩已用过的例子，二辩不再重复
+    try:
+        from .engine import _no_repeat_note
+        repeat_note = _no_repeat_note(opponent)
+    except Exception:
+        repeat_note = ""
+    task = (f"【辩题】{topic}\n【对方刚刚的发言】\n{opponent}"
+            f"{repeat_note}\n\n请按上面的要求，直接说出你的反驳。")
     headers = {"Authorization": f"Bearer {key}", "OpenAI-Beta": "realtime=v1",
                "User-Agent": "Mozilla/5.0"}
 
