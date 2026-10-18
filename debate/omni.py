@@ -54,7 +54,8 @@ def _header_kwarg() -> str:
 
 def build_instructions(*, our_side: str, our_case: str, duration: int = 45,
                        memory: str = "", extra: str = "",
-                       no_strategy: bool = False) -> str:
+                       no_strategy: bool = False,
+                       continuation: dict | None = None) -> str:
     """把「人设 + 立场 + 时长约束 + 长期记忆」拼成 Omni 的 system。
 
     no_strategy=True 为训练版纯净模式：用 prompts.SYSTEM_CLEAN，
@@ -74,6 +75,13 @@ def build_instructions(*, our_side: str, our_case: str, duration: int = 45,
         "- 不要输出任何 Markdown 符号（星号、井号、项目符号），不要分行列表，就是一段自然的口语。",
         "- 必须以一段可直接朗读的话结束，不要在末尾补充说明或标注。",
     ]
+    if continuation:
+        parts += ["",
+                  prompts.CONTINUE_NOTE.format(
+                      part=int(continuation.get("part") or 2),
+                      said=(str(continuation.get("said") or "").strip() or "（尚未开口）"),
+                      fresh=(str(continuation.get("fresh") or "").strip() or "（对方没有新的补充）"),
+                      remain=duration, lo=lo, hi=hi)]
     mem = (memory or "").strip()
     if mem:
         parts += ["", "【本场长期记忆（避免重复，保持连贯）】", mem]
@@ -89,7 +97,9 @@ def build_instructions(*, our_side: str, our_case: str, duration: int = 45,
 async def rebut_stream_omni(*, opponent: str, our_side: str, our_case: str,
                             topic: str = "", duration: int = 45, memory: str = "",
                             voice: str = "", model: str = "",
-                            system_extra: str = "", no_strategy: bool = False) -> AsyncIterator[dict]:
+                            system_extra: str = "", no_strategy: bool = False,
+                            continuation: dict | None = None,
+                            chunk_sec: int = 0) -> AsyncIterator[dict]:
     """文本入 → 文本 + PCM 音频流式出。异常统一转成 error 事件，不向上抛。"""
     key = dashscope_key()
     if not key:
@@ -103,9 +113,14 @@ async def rebut_stream_omni(*, opponent: str, our_side: str, our_case: str,
 
     mdl = (model or model_id()).strip()
     voc = (voice or voice_id()).strip()
+    # 分段 / 续写：本段只负责剩余时长那一段
+    if continuation:
+        duration = max(6, int(continuation.get("remain_sec") or duration))
+    elif chunk_sec:
+        duration = max(6, min(int(duration), int(chunk_sec)))
     instructions = build_instructions(our_side=our_side, our_case=our_case,
                                       duration=duration, memory=memory, extra=system_extra,
-                                      no_strategy=no_strategy)
+                                      no_strategy=no_strategy, continuation=continuation)
     task = f"【辩题】{topic}\n【对方刚刚的发言】\n{opponent}\n\n请按上面的要求，直接说出你的反驳。"
     headers = {"Authorization": f"Bearer {key}", "OpenAI-Beta": "realtime=v1",
                "User-Agent": "Mozilla/5.0"}

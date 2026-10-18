@@ -332,15 +332,21 @@ class Engine:
             kw["memory"] = (base_mem + "\n\n" if base_mem else "") + \
                 "【使用方自定义提示词（务必遵循；与上面的默认风格或技法冲突时，以本段为准）】\n" + extra
         no_strategy = bool(kw.pop("no_strategy", False))
+        continuation = kw.pop("continuation", None) or None
+        chunk_sec = int(kw.pop("chunk_sec", 0) or 0)
         strong = self.client_for(model_id, "rebut")
         runner = {
             "two_stage": self._rebut_two_stage,
             "spec": self._rebut_spec,
         }.get(self.mode, self._rebut_one_shot)
+        # 续写 / 分段出稿只走 one_shot（结构+策略那套要先做整体分析，不适合接续）
+        if continuation or chunk_sec:
+            runner = self._rebut_one_shot
         usage = cost.UsageAcc()
         last_done: dict | None = None
         async for event in runner(usage=usage, strong_client=strong,
-                                  no_strategy=no_strategy, **kw):
+                                  no_strategy=no_strategy,
+                                  continuation=continuation, chunk_sec=chunk_sec, **kw):
             if event.get("type") == "done":
                 last_done = event      # 暂存，待事实核查后再下发
                 continue
@@ -517,7 +523,9 @@ class Engine:
     async def _rebut_one_shot(self, *, opponent: str, our_side: str, our_case: str,
                               topic: str, duration: int, usage: cost.UsageAcc | None = None,
                               strong_client: ChatClient | None = None, memory: str = "",
-                              no_strategy: bool = False
+                              no_strategy: bool = False,
+                              continuation: dict | None = None,
+                              chunk_sec: int = 0
                               ) -> AsyncIterator[dict]:
         t0 = time.monotonic()
         strong = strong_client or self.strong
@@ -525,9 +533,23 @@ class Engine:
         sys_p = prompts.SYSTEM_CLEAN if no_strategy else prompts.SYSTEM
         tpl = prompts.ONE_SHOT_CLEAN if no_strategy else prompts.ONE_SHOT
         yield {"type": "stage", "stage": "draft", "status": "start"}
+        # 分段 / 续写：本段只负责「剩余时长」那一段，字数按剩余时长折算
+        if continuation:
+            eff_sec = max(6, int(continuation.get("remain_sec") or 20))
+        else:
+            eff_sec = max(6, min(int(duration) or 45, int(chunk_sec or 0) or int(duration) or 45))
+        lo, hi = eff_sec * 4.5, eff_sec * 5.5
         prompt = _aug(prompts.render(
-            tpl, duration=duration, lo=duration * 4.5, hi=duration * 5.5,
+            tpl, duration=eff_sec, lo=lo, hi=hi,
             topic=topic, our_side=our_side, our_case=our_case, opponent=opponent), memory)
+        if not continuation and chunk_sec:
+            prompt += prompts.CHUNK_NOTE.format(sec=eff_sec, lo=int(lo), hi=int(hi))
+        if continuation:
+            prompt += prompts.CONTINUE_NOTE.format(
+                part=int(continuation.get("part") or 2),
+                said=(str(continuation.get("said") or "").strip() or "（尚未开口）"),
+                fresh=(str(continuation.get("fresh") or "").strip() or "（对方没有新的补充）"),
+                remain=eff_sec, lo=int(lo), hi=int(hi))
 
         out: dict = {}
         async for event in self._stream_draft(strong, prompt, t0, out, usage, sys_p):
@@ -546,13 +568,15 @@ class Engine:
         yield {"type": "stage", "stage": "guard", "status": "done", "ms": 0}
         yield self._finish(out.get("keep") or [], out.get("flags") or [],
                            out.get("first_ms"), t0,
-                           {"mode": "one_shot", "parallel": 1}, duration, usage)
+                           {"mode": "one_shot", "parallel": 1,
+                            "part": int((continuation or {}).get("part") or 1)}, eff_sec, usage)
 
     # ================= 模式二：结构+策略 → 并行出稿 =================
     async def _rebut_two_stage(self, *, opponent: str, our_side: str, our_case: str,
                                topic: str, duration: int, usage: cost.UsageAcc | None = None,
                                strong_client: ChatClient | None = None, memory: str = "",
-                               no_strategy: bool = False
+                               no_strategy: bool = False, continuation: dict | None = None,
+                               chunk_sec: int = 0
                                ) -> AsyncIterator[dict]:
         t0 = time.monotonic()
         sys_p = prompts.SYSTEM_CLEAN if no_strategy else prompts.SYSTEM
@@ -644,7 +668,8 @@ class Engine:
     async def _rebut_spec(self, *, opponent: str, our_side: str, our_case: str,
                           topic: str, duration: int, usage: cost.UsageAcc | None = None,
                           strong_client: ChatClient | None = None, memory: str = "",
-                          no_strategy: bool = False
+                          no_strategy: bool = False, continuation: dict | None = None,
+                          chunk_sec: int = 0
                           ) -> AsyncIterator[dict]:
         """快/强（+备用）多路并行出稿，先产出首句者独得全稿；其余路继续跑以备兜底。
 

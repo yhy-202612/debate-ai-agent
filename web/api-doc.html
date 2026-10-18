@@ -476,6 +476,25 @@ rebut(&quot;对方说AI会侵蚀人的判断力，让能力退化。&quot;,
 <li>智能体侧开关：<code>floorMode</code>（默认开）走流程判定；<code>attr</code>（默认关）仍可调 <code>/api/attribute</code> 做 AI 判定</li>
 <li>未收到任何大屏信息时自动回退到 <code>/api/attribute</code></li>
 </ul>
+<h2>4.7 分段续写（边播边生成）</h2>
+<p><code>POST /api/rebut</code> 与 <code>/api/rebut-omni</code> 支持把一次长发言拆成「前段 + 续写段」：</p>
+<pre><code class="language-json">{
+  &quot;opponent&quot;: &quot;对方全文&quot;,
+  &quot;duration&quot;: 45,
+  &quot;chunk_sec&quot;: 20,                       // 抢跑首段：只写约 20 秒（≈ 90~110 字）
+  &quot;continuation&quot;: {                      // 续写段（第二次请求时带）
+    &quot;part&quot;: 2,
+    &quot;said&quot;: &quot;第一段已说出口的全文&quot;,        // 用于避免重复
+    &quot;fresh&quot;: &quot;我方开口之后对方新增的发言&quot;,  // 必须正面回应
+    &quot;remain_sec&quot;: 25
+  }
+}
+</code></pre>
+<ul>
+<li>两者互斥：首段带 <code>chunk_sec</code>，续写段带 <code>continuation</code></li>
+<li>服务端会自动追加续写/分段指令（不重复、不断章、字数按剩余时长折算）</li>
+<li>续写与分段只走 <code>one_shot</code> 模式（结构+策略那套要先做整体分析，不适合接续）</li>
+</ul>
 <h2>五、数据分离（重要）</h2>
 <p>两方训练数据<strong>必须隔离</strong>，规则如下：</p>
 <table>

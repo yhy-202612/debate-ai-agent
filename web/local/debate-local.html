@@ -295,6 +295,10 @@
           <input id="cfgFreeDelay" type="range" min="0" max="1000" step="50" value="700">
           <div class="mini">发言权空出后，AI 先等这么久再抢；期间有人按下按钮就放弃。<b>0</b> = 抢得最快但可能垄断发言权；<b>600~800</b> 给真人留出反应时间（推荐）。</div>
         </div>
+        <div class="sw" style="margin-top:10px"><input type="checkbox" id="cfgChunked" checked> <b>分段续写（边播边生成）</b>：抢跑只写前一段，开口时把「已说内容 + 对方在我方开口后新增的发言」交给模型续写下一段，后半段能真正回应对方最新说法</div>
+        <div><label>首段时长占比（分段续写）</label><input id="cfgChunkRatio" type="number" min="0.30" max="0.70" step="0.05" value="0.45">
+          <div class="mini">0.45 = 前 45% 时长先写好，其余在开口后结合对方新发言续写。调小 → 更快融入新内容；调大 → 首段更完整。</div>
+        </div>
         <div class="sw" style="margin-top:8px"><input type="checkbox" id="cfgRtAsr"> 实时识别通道（备用可选）· 边听边出字 + 服务端判停<span id="rtAsrState" class="mini"></span></div>
         <div class="sw" style="margin-top:8px"><input type="checkbox" id="cfgOmni" checked> <b>端到端出稿通道（推荐）· 首音约 1 秒，一次生成直接出声音</b>；关闭则走级联（首句需 5~18 秒）<span id="omniState" class="mini"></span></div>
         <div class="grid2">
@@ -387,7 +391,7 @@ const DEFAULTS = {
   asrModel:"Qwen/Qwen3-ASR-1.7B",
   autoGen:false, autoGenChars:60, autoSpeak:true, micId:"", asrFix:false,
   streamMode:false, streamMinChars:20, streamGapMs:7000, rtAsr:false, freeClaimDelay:700,
-  floorMode:true, attr:false,
+  floorMode:true, attr:false, chunked:true, chunkRatio:0.45,
   omni:true, omniVoice:"", omniModel:"",
   silence:700, minSeg:600, maxSeg:15000, vad:0.012, blockGapMs:8000,
   mode:"test", autoSave:true, session:"", speakGap:3500, speakCooldown:20000, audioHeal:false, model:"",
@@ -706,6 +710,8 @@ function fillSettings(){
   if($("cfgAudioHeal")) $("cfgAudioHeal").checked = cfg.audioHeal===true;
   if($("cfgFloorMode")) $("cfgFloorMode").checked = cfg.floorMode!==false;
   if($("cfgAttr")) $("cfgAttr").checked = cfg.attr===true;
+  if($("cfgChunked")) $("cfgChunked").checked = cfg.chunked!==false;
+  if($("cfgChunkRatio")) $("cfgChunkRatio").value = (cfg.chunkRatio==null?0.45:cfg.chunkRatio);
   $("cfgStreamMode").checked=!!cfg.streamMode;
   if($("cfgRtAsr")) $("cfgRtAsr").checked=!!cfg.rtAsr;
   if($("cfgOmni")) $("cfgOmni").checked=!!cfg.omni;
@@ -762,6 +768,12 @@ function saveSettings(){
   cfg.audioHeal = !!(($("cfgAudioHeal")||{}).checked);
   cfg.floorMode = $("cfgFloorMode") ? $("cfgFloorMode").checked : (cfg.floorMode!==false);
   cfg.attr = $("cfgAttr") ? $("cfgAttr").checked : !!cfg.attr;
+  cfg.chunked = $("cfgChunked") ? $("cfgChunked").checked : (cfg.chunked!==false);
+  if($("cfgChunkRatio")){
+    let r = parseFloat($("cfgChunkRatio").value);
+    if(!isFinite(r)) r = 0.45;
+    cfg.chunkRatio = Math.max(0.3, Math.min(0.7, r));
+  }
   cfg.streamMode = $("cfgStreamMode").checked;
   cfg.rtAsr = $("cfgRtAsr") ? $("cfgRtAsr").checked : !!cfg.rtAsr;
   cfg.omni = $("cfgOmni") ? $("cfgOmni").checked : !!cfg.omni;
@@ -1251,6 +1263,7 @@ async function runSpeakCheck(){
         for(const u8 of preAudioBuf) spkPushPcm(u8, sr);
         preAudioBuf = [];
       }
+      kickContinuation();                               // 开口即续写：把抢跑后对方新说的话接进后半段
       drain();                                          // 已产出的先播，仍在生成的句子会流式续入
       return;
     }
@@ -1742,6 +1755,7 @@ async function genRebutOmni(auto, opts){
   const isPre = !!(opts && opts.pre);          // 抢跑：音频只缓存不播，等对方说完再放
   if(!transcript.length){ if(!auto) alert("还没有转写内容。请先「开始倾听」，或至少有一段发言。"); return; }
   genBusy=true; lastGenAt=Date.now();
+  resetContinuation();
   if(!isPre) preHold = false;              // 抢跑时保留 preHold（由 maybeStreamPregenerate 置位）
   if(isPre) preAudioBuf = [];              // 抢跑：暂存音频块，说完再一次性放出
   const ctx = transcript.map(s=>`[${WHO_LABEL[s.who]}] ${s.text}`).join("\n");
@@ -1767,6 +1781,7 @@ async function genRebutOmni(auto, opts){
       body: JSON.stringify({opponent: ctx, our_side: cfg.side||"待定", our_case: cfg.kase||"（未填）",
         topic: cfg.topic, duration: cfg.duration,
         voice: cfg.omniVoice||"", model: cfg.omniModel||"",
+        chunk_sec: (chunkOn() && isPre) ? chunkFirstSec() : 0,
         memory: summaryIsOn() ? summaryText() : ""})
     });
     if(!resp.ok){ let m=resp.status; try{ m=(await resp.json()).detail||m; }catch(e){} throw new Error("服务返回 "+m); }
@@ -1800,6 +1815,7 @@ async function genRebutOmni(auto, opts){
               +" · 共 "+((ev.ms||0)/1000).toFixed(1)+"s · "+(ev.chars||0)+" 字 · "+ev.voice;
             $("flags").appendChild(info);
             lastSentences = omniSplitSentences(omniText);
+            if(isPre) maybeArmContinuation();          // 抢跑首段就绪 → 开口时自动续写
           }else if(ev.type==="error"){
             const el=document.createElement("div"); el.className="flag"; el.textContent="✗ "+ev.message;
             $("flags").appendChild(el);
@@ -1827,9 +1843,12 @@ async function genRebut(auto, opts){
   if(cfg.omni) return genRebutOmni(auto, opts);
   // ★ 非「抢跑」（手动点生成、或正常时机出稿）→ 解除只攒不播，出句即播。
   //   抢跑稿（opts.pre）保持 preHold=true，等对方说完由 runSpeakCheck 放出。
-  if(!(opts && opts.pre)) preHold = false;
+  if(opts && opts.pre) preHold = true;        // 抢跑稿：只攒不播（不依赖调用方是否已置位）
+  else preHold = false;
   if(!transcript.length){ if(!auto) alert("还没有转写内容。请先「开始倾听」，或至少有一段发言。"); return; }
   genBusy=true; lastGenAt=Date.now();
+  resetContinuation();
+  preGenActive = !!(opts && opts.pre);
   const ctx = transcript.map(s=>`[${WHO_LABEL[s.who]}] ${s.text}`).join("\n");
   stopped=false; queue.length=0; lastSentences=[];
   $("speech").innerHTML=""; $("flags").innerHTML=""; $("metrics").innerHTML=""; $("stages").innerHTML="";
@@ -1849,6 +1868,8 @@ async function genRebut(auto, opts){
       headers: authHeaders({"Content-Type":"application/json"}),
       body: JSON.stringify({opponent: ctx, our_side: cfg.side||"待定", our_case: cfg.kase||"（未填）",
         topic: cfg.topic, duration: cfg.duration, model: cfg.model||"",
+        /* ★分段续写：抢跑时只让模型写第一段，剩下的边播边结合对方新发言续写 */
+        chunk_sec: (chunkOn() && opts && opts.pre) ? chunkFirstSec() : 0,
         memory: summaryIsOn() ? summaryText() : ""})
     });
     if(!resp.ok){ let m=resp.status; try{ m=(await resp.json()).detail||m; }catch(e){} throw new Error("服务返回 "+m); }
@@ -1903,6 +1924,7 @@ function handleEvent(ev){
     if(lastSentences.length) $("scoreBox").style.display="flex";
     if(!$("autoSpeak").checked && lastSentences.length && !stopped) $("speakState").textContent="已就绪，可点「播报全文」";
     reconcileSentences(ev.sentences||[]);      // 以服务端最终稿兜底：修正流式可能吞字/漏句
+    if(preGenActive) maybeArmContinuation();       // 抢跑稿就绪 → 待开口时自动续写下一段
   }
 }
 /* 以服务端最终稿为准校准显示（流式提取偶发截断时补齐/修正），并对遗漏句补播 */
@@ -1922,6 +1944,128 @@ function reconcileSentences(finalSents){
     changed=true;
   }
   if(changed) $("speakState").textContent="已按最终稿校准（补齐被截断/遗漏的句子）";
+}
+
+/* ══ 分段续写（边播边生成）═══════════════════════════════════════════════
+   抢跑时只让模型写「第一段」（约占时长 45%）；这一段开始播的同时，
+   把「已说内容 + 对方在我方开口之后新增的发言」发给服务端续写第二段，
+   拿到后直接接进同一条播放时间轴 —— 后半段因此能真正回应对方的最新说法，
+   而不是照着开口前听到的半句一路写到底。 */
+let contState=null, contInflight=false;
+let preGenActive=false;      // 本次出稿是不是抢跑（handleEvent 是独立函数，读不到 opts）
+function chunkOn(){ return cfg.chunked!==false; }
+function chunkFirstSec(){ return Math.max(8, Math.round((cfg.duration||45) * (cfg.chunkRatio==null?0.45:Number(cfg.chunkRatio)||0.45))); }
+function resetContinuation(){ contState=null; contInflight=false; }
+function maybeArmContinuation(){
+  if(!chunkOn() || !lastSentences.length) return;
+  if(contState && contState.started) return;
+  contState = { started:false, part:2, markIdx: transcript.length,
+                remain: Math.max(10, Math.round((cfg.duration||45) - chunkFirstSec())) };
+  const st=$("speakState"); if(st) st.textContent="首段已就绪 · 开口后自动结合对方新发言续写下一段";
+}
+/* 我方开口之后对方新增的发言（这才是「抢跑后」的部分） */
+function freshOppText(){
+  const from = contState ? contState.markIdx : 0;
+  const arr = transcript.slice(from).filter(s=>s.who==="opp").map(s=>s.text);
+  return (arr.join("") || lastOppText() || "").trim();
+}
+function kickContinuation(){
+  if(!chunkOn() || !contState || contState.started || contInflight) return;
+  genContinuation();
+}
+async function genContinuation(){
+  if(!contState || contState.started || contInflight) return;
+  contState.started = true; contInflight = true;
+  const said = lastSentences.map(o=>typeof o==="string"?o:o.text).join("");
+  const fresh = freshOppText();
+  const remain = contState.remain || 20;
+  const st=$("speakState"); if(st) st.textContent="续写第 2 段（已结合对方最新发言）…";
+  try{
+    if(cfg.omni) return await genContinuationOmni(said, fresh, remain);
+    const ctx = transcript.map(s=>`[${WHO_LABEL[s.who]}] ${s.text}`).join("\n");
+    const resp = await fetch(api("/api/rebut"), {method:"POST",
+      headers: authHeaders({"Content-Type":"application/json"}),
+      body: JSON.stringify({opponent:ctx, our_side:cfg.side||"待定", our_case:cfg.kase||"（未填）",
+        topic:cfg.topic, duration:cfg.duration, model:cfg.model||"",
+        memory: summaryIsOn()?summaryText():"",
+        continuation:{part:2, said, fresh, remain_sec:remain}})
+    });
+    if(!resp.ok) throw new Error("服务返回 "+resp.status);
+    const rd=resp.body.getReader(), dec=new TextDecoder(); let buf="";
+    const myGen=speakGen;
+    while(true){
+      const {done,value}=await rd.read(); if(done) break;
+      buf+=dec.decode(value,{stream:true});
+      let i;
+      while((i=buf.indexOf("\n\n"))>=0){
+        const chunk=buf.slice(0,i); buf=buf.slice(i+2);
+        for(const line of chunk.split("\n")){
+          if(!line.startsWith("data:")) continue;
+          let ev; try{ ev=JSON.parse(line.slice(5).trim()); }catch(e){ continue; }
+          if(ev.type==="sentence" && ev.text){
+            if(myGen!==speakGen || stopped) return;
+            const el=document.createElement("div"); el.className="sent";
+            el.textContent=(lastSentences.length+1)+". "+ev.text;
+            $("speech").appendChild(el);
+            lastSentences.push({text:ev.text, el});
+            enqueue(ev.text, el);           // 直接接进正在播的时间轴
+          }else if(ev.type==="error"){ throw new Error(ev.error||"续写出错"); }
+        }
+      }
+    }
+    if(st) st.textContent="第 2 段已接入（共 "+(lastSentences.length)+" 句）";
+  }catch(e){
+    const el=$("speakState"); if(el) el.textContent="续写失败："+e.message+"（首段照常播报）";
+  }finally{ contInflight=false; }
+}
+/* 端到端通道的续写：音频块直接排入同一时间轴，字幕累积到句末标点再上屏 */
+async function genContinuationOmni(said, fresh, remain){
+  const ctx = transcript.map(s=>`[${WHO_LABEL[s.who]}] ${s.text}`).join("\n");
+  const resp = await fetch(api("/api/rebut-omni"), {method:"POST",
+    headers: authHeaders({"Content-Type":"application/json"}),
+    body: JSON.stringify({opponent:ctx, our_side:cfg.side||"待定", our_case:cfg.kase||"（未填）",
+      topic:cfg.topic, duration:cfg.duration,
+      voice:cfg.omniVoice||"", model:cfg.omniModel||"",
+      memory: summaryIsOn()?summaryText():"",
+      continuation:{part:2, said, fresh, remain_sec:remain}})
+  });
+  if(!resp.ok) throw new Error("服务返回 "+resp.status);
+  const sr = (typeof OMNI_INFO!=="undefined" && OMNI_INFO.sample_rate) || 24000;
+  const rd=resp.body.getReader(), dec=new TextDecoder(); let buf="", txt="";
+  while(true){
+    const {done,value}=await rd.read(); if(done) break;
+    buf+=dec.decode(value,{stream:true});
+    let i;
+    while((i=buf.indexOf("\n\n"))>=0){
+      const chunk=buf.slice(0,i); buf=buf.slice(i+2);
+      for(const line of chunk.split("\n")){
+        if(!line.startsWith("data:")) continue;
+        let ev; try{ ev=JSON.parse(line.slice(5).trim()); }catch(e){ continue; }
+        if(ev.type==="text" && ev.delta){
+          txt += ev.delta;
+          const mm = txt.match(/^[\s\S]*?[。！？…]/);
+          if(mm){
+            const sent = mm[0].trim(); txt = txt.slice(mm[0].length);
+            if(sent){
+              const el=document.createElement("div"); el.className="sent";
+              el.textContent=(lastSentences.length+1)+". "+sent;
+              $("speech").appendChild(el);
+              lastSentences.push({text:sent, el});
+            }
+          }
+        }else if(ev.type==="audio" && ev.delta){
+          try{ const bin=atob(ev.delta); const u8=new Uint8Array(bin.length);
+            for(let k=0;k<bin.length;k++) u8[k]=bin.charCodeAt(k);
+            spkPushPcm(u8, sr); }catch(e){}
+        }else if(ev.type==="error"){ throw new Error(ev.message||ev.error||"续写出错"); }
+      }
+    }
+  }
+  if(txt.trim()){
+    const el=document.createElement("div"); el.className="sent";
+    el.textContent=(lastSentences.length+1)+". "+txt.trim();
+    $("speech").appendChild(el); lastSentences.push({text:txt.trim(), el});
+  }
 }
 
 /* ---------------- 播报（服务器 TTS） ---------------- */
@@ -1991,6 +2135,7 @@ async function drain(){
   stagePublish(true);                    // ★通知辩论大屏：AI 二辩开始发言
   const myGen=speakGen;                 // 本次播报代际（叫停会 +1，立即中断所有等待）
   let startedAny=false, pending=null;   // pending = 已切好并已开始预取的下一段
+  let contWaitStart=0;                  // 等待续写段到位的起点（用于超时兜底）
   /* ★ 播放方式：默认跟随设置；但若首段在抢跑期已预合成（缓存命中），
      直接改用整段播放——省掉流式首包等待与预缓冲，按下按钮即出声。 */
   let segMode = (cfg.streamTts===false);
@@ -2003,7 +2148,16 @@ async function drain(){
         //   只有「正常出稿、队列仅 1 句」时才短暂等待，把紧随其后的句子并成一段。
         const waitSeg = (startedAny || queue.length > 1) ? 0 : SPEAK_FIRST_WAIT;
         const s=await takeSeg(waitSeg);
-        if(!s){ if(!queue.length) break; continue; }
+        if(!s){
+          /* 本段已播完、下一段还在续写 → 等它接上（最多 25 秒），别把一段话切成两截 */
+          if(contInflight && !stopped && myGen===speakGen && Date.now()-contWaitStart < 25000){
+            if(!contWaitStart) contWaitStart=Date.now();
+            $("speakState").textContent="等续写下一段…";
+            await new Promise(r=>setTimeout(r,80));
+            continue;
+          }
+          if(!queue.length) break; continue;
+        }
         cur={seg:s, p:(startedAny? fetchSegPcm(s.text) : null)};   // 首段稍后边收边播，不重复预取
       }
       const seg=cur.seg;
@@ -2411,6 +2565,7 @@ function speakNow(){
   preHold = false; stopped = false;
   lastSpeakAt = Date.now();
   const st=$("speakState"); if(st) st.textContent="立即发言…";
+  kickContinuation();                                // 开口的同时开始续写下一段
   drain();
   return true;
 }

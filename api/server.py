@@ -92,9 +92,22 @@ def _validate(payload: dict) -> dict:
     extra = str(payload.get("system_extra") or "").strip()[:3000]
     # 纯净模式（训练版默认）：不注入辩论技法与考察口径，只保留 TTS 对接所需的格式约束
     no_strategy = bool(payload.get("no_strategy"))
+    # ── 分段 / 续写（边播边生成）──
+    chunk_sec = int(payload.get("chunk_sec") or 0)
+    chunk_sec = max(0, min(int(duration) or 45, chunk_sec))
+    raw_cont = payload.get("continuation")
+    continuation = None
+    if isinstance(raw_cont, dict):
+        continuation = {
+            "part": max(2, min(9, int(raw_cont.get("part") or 2))),
+            "said": str(raw_cont.get("said") or "").strip()[:1500],
+            "fresh": str(raw_cont.get("fresh") or "").strip()[:1500],
+            "remain_sec": max(6, min(int(duration) or 45, int(raw_cont.get("remain_sec") or 20))),
+        }
     return {"opponent": opponent, "our_side": our_side, "our_case": our_case,
             "topic": topic, "duration": duration, "system_extra": extra,
-            "no_strategy": no_strategy}
+            "no_strategy": no_strategy, "chunk_sec": chunk_sec,
+            "continuation": continuation}
 
 
 @app.get("/healthz")
