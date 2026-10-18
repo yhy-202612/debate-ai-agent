@@ -134,7 +134,7 @@
   <button id="btnNext">下一环节<span class="kbd">（→）</span></button>
   <button id="btnPrev">上一环节<span class="kbd">（←）</span></button>
   <button id="btnReset">重置本环节<span class="kbd">（R）</span></button>
-  <button id="btnSerial">连接开发板</button>
+  <button id="btnSerial">连接开发板（可连两块）</button>
   <button id="btnHelp">说明<span class="kbd">（H）</span></button>
   <button id="btnKeys" title="隐藏/显示键位提示（快捷键 K）">键位提示：开</button>
   <div class="spacer"></div>
@@ -405,8 +405,14 @@ function prevStage(){ if(S.idx>0){ S.idx--; applyStage(); } }
 function resetStage(){ S.finished=false; applyStage(); }
 
 /* ---------- 开发板（Web Serial） ---------- */
-let serialPort = null, serialReader = null, serialWriter = null;
-const BTN_MAP = { "A1":"pro-1", "A2":"pro-3", "B1":"con-1", "B2":"con-3" }; // 每块板 2 个按钮
+let serialPort = null, serialReader = null, serialWriter = null;   // 兼容：指向最后一个连接
+/* ★支持同时连接两块板（一块插电脑一个 USB 口，或经 USB Hub）：按钮事件都从这台电脑中转进网页 */
+let serialLinks = [];          // [{port, writer, board}]
+const serialBoards = new Set();// 已握手/已上报过的板号 A / B / 4
+const BTN_MAP = {              // 每块板 2 个按钮；'4' = 一块板 4 个按钮
+  "A1":"pro-1", "A2":"pro-3", "B1":"con-1", "B2":"con-3",
+  "41":"pro-1", "42":"pro-3", "43":"con-1", "44":"con-3",
+};
 
 function setSerialState(txt, cls){
   $("serialState").textContent = txt;
@@ -417,42 +423,64 @@ async function connectSerial(){
     setSerialState("浏览器不支持（需 Chrome/Edge + http://localhost 或 https）", "err");
     beep(2, 300); return;
   }
+  if(serialLinks.length >= 2){ setSerialState("已连两块板（如需重连请刷新页面）", "ok"); beep(2,300); return; }
   try{
-    serialPort = await navigator.serial.requestPort();
-    await serialPort.open({ baudRate: 115200 });
-    serialWriter = serialPort.writable.getWriter();
-    setSerialState("已连接（115200）", "ok");
+    const port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 115200 });
+    const link = { port, writer: port.writable.getWriter(), board: "" };
+    serialLinks.push(link);
+    serialPort = port; serialWriter = link.writer;
+    setSerialState(serialLinks.length === 1 ? "已连接 1 块板（再点一次可连第二块）" : "已连接 2 块板", "ok");
     beep(1, 1200);
-    readSerial();
+    readSerial(link);
   }catch(e){ setSerialState("连接失败：" + (e.message||e), "err"); }
 }
-async function readSerial(){
+async function readSerial(link){
   const dec = new TextDecoderStream();
-  serialPort.readable.pipeTo(dec.writable).catch(()=>{});
-  serialReader = dec.readable.getReader();
+  link.port.readable.pipeTo(dec.writable).catch(()=>{});
+  link.reader = dec.readable.getReader();
+  if(link === serialLinks[serialLinks.length-1]) serialReader = link.reader;
   let buf = "";
   try{
     while(true){
-      const { value, done } = await serialReader.read();
+      const { value, done } = await link.reader.read();
       if(done) break;
       buf += value;
       let i;
       while((i = buf.indexOf("\n")) >= 0){
         const line = buf.slice(0, i).trim(); buf = buf.slice(i+1);
-        if(line) onSerialLine(line);
+        if(line) onSerialLine(line, link);
       }
     }
   }catch(e){}
-  setSerialState("已断开");
+  serialLinks = serialLinks.filter(l => l !== link);
+  setSerialState(serialLinks.length ? ("已连接 " + serialLinks.length + " 块板") : "已断开（拔线或板子掉电）");
 }
-function onSerialLine(line){
-  // 协议：A1:D / A1:U（按下/松开）；板号 A=正方侧、B=反方侧
-  const m = line.match(/^([AB])(\d):([DU])$/);
-  if(m){
-    const key = m[1] + m[2];
-    if(m[3] === "D"){ onButton(key); postBuzz(m[1]); }   // 按下即向智能体发令（A=正方侧 / B=反方侧）
+function onSerialLine(line, link){
+  /* 协议：<板号><按钮号>:D / :U   板号 A=正方侧、B=反方侧、4=一板四键 */
+  if(/^READY/.test(line)){
+    const b = line.replace(/^READY\s*/, "").trim();
+    if(b){ serialBoards.add(b); if(link) link.board = b; refreshSerialLabel(); }
+    return;
   }
-  if(/^PING/.test(line)) sendSerial("PONG");
+  const m = line.match(/^([AB4])(\d):([DU])$/);
+  if(m){
+    if(link){ link.board = m[1]; serialBoards.add(m[1]); refreshSerialLabel(); }
+    const key = m[1] + m[2];
+    if(m[3] === "D"){
+      const who = BTN_MAP[key] || "";
+      onButton(key);
+      postBuzz(who.indexOf("con") === 0 ? "B" : "A");     // ★按「哪个辩位」定方向（一板四键也正确）
+    }
+    return;
+  }
+  const b2 = line.match(/^([AB4]):BEAT$/);
+  if(b2){ serialBoards.add(b2[1]); if(link) link.board = b2[1]; refreshSerialLabel(); }
+  if(/^PING/.test(line)) sendSerial("PONG", link);
+}
+function refreshSerialLabel(){
+  const names = [...serialBoards].map(b => b === "A" ? "正方板" : b === "B" ? "反方板" : "四键板");
+  if(names.length) setSerialState("已连接 " + names.join(" + "), "ok");
 }
 /* ★ 发令总线：实体按钮 / 环节切换 / 抢话仲裁 全部走这里，智能体侧订阅后即时响应 */
 function buzzPub(payload){
@@ -463,7 +491,8 @@ function buzzPub(payload){
 }
 function postBuzz(sideLetter){
   /* 统一协议：side 一律用 pro / con（原来发板号 A/B，智能体侧无法与「正方/反方」比对） */
-  const side = (sideLetter === "A" || sideLetter === "pro") ? "pro" : "con";
+  /* '4' 板一板四键：按按钮号决定方向由 onButton 的 BTN_MAP 处理，这里只给默认（正方） */
+  const side = (sideLetter === "A" || sideLetter === "4" || sideLetter === "pro") ? "pro" : "con";
   const st = RULES[S.idx];
   buzzPub({side, action:"down", source:"button", stage:S.idx, kind:st?st.kind:""});
 }
@@ -486,8 +515,9 @@ function buzzListen(){
         return;
       }
       if(ev.action === "ai_done"){
-        /* AI 发言结束 → 电脑音箱"嘀"一声提醒真人：轮到你了（无需任何硬件） */
+        /* AI 发言结束 → 电脑音箱"嘀"一声 + 对面板子闪三下，提醒真人：轮到你了 */
         try{ beep(1, 660); }catch(e){}
+        try{ sendSerial(((ev.side === "反方" || ev.side === "con") ? "B" : "A") + ":HINT"); }catch(e){}
         /* 自由辩论 → 释放发言权（可继续抢）；其它环节 → 交回本环节真人方 */
         const st = RULES[S.idx];
         if(st.kind === "free"){
@@ -518,10 +548,11 @@ function buzzListen(){
     };
   }catch(e){}
 }
-function sendSerial(cmd){
-  if(!serialWriter) return;
+function sendSerial(cmd, only){          // only = 指定某个 link（如 PONG 只回给提问那块板）
   const full = cmd === "BUZZ" ? "A:BUZZ\n" : cmd + "\n";
-  try{ serialWriter.write(new TextEncoder().encode(full)); }catch(e){}
+  const enc = new TextEncoder();
+  const targets = only ? [only] : serialLinks;
+  for(const l of targets){ try{ l.writer.write(enc.encode(full)); }catch(e){} }
 }
 
 /* ---------- 按钮 → 抢话/计时 ---------- */
@@ -643,7 +674,9 @@ function showHelp(){
        Web Serial 才可用（直接双击 file:// 打开时按钮接口不可用，但键盘与鼠标仍可用）。
        用本机 http 打开时同样不可用，请改用 https 入口。</p>
     <p><b>配套程序下载</b>：
-       <a href="esp32-button.ino" download>ESP32 按钮程序 · USB 版（esp32-button.ino）</a> ·
+       <a href="esp32-button-usb-A.ino" download>USB 版 · 正方板（已预置 A）</a> ·
+       <a href="esp32-button-usb-B.ino" download>USB 版 · 反方板（已预置 B）</a> ·
+       <a href="esp32-button.ino" download>ESP32 按钮程序 · USB 通用版（含三种接法）</a> ·
        <a href="esp32-button-wifi.ino" download>ESP32 按钮程序 · WiFi 版（通用，含 A/B/4 三种接法）</a> ·
        <a href="esp32-button-wifi-A.ino" download>WiFi 版 · 正方板（已预置 A）</a> ·
        <a href="esp32-button-wifi-B.ino" download>WiFi 版 · 反方板（已预置 B）</a> ·

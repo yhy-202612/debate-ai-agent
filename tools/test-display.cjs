@@ -185,6 +185,28 @@ const on=id=>win.document.getElementById(id).classList.contains("on");
   await press("反方", 3);
   ok("★AI 说完后对方可接话", on("seat-con-3"));
 
+  // ── 串口协议（USB 版固件的中转链路）：A/B 两块板 + '4' 一板四键 ──
+  win.eval("S.idx=0; applyStage();"); await sleep(80);
+  win.eval('onSerialLine("READY A", null)'); await sleep(30);
+  ok("★串口 READY A → 识别到正方板", /正方板/.test($("serialState").textContent), $("serialState").textContent);
+  win.eval('onSerialLine("A1:D", null)'); await sleep(30);
+  ok("A1:D → 正方一辩亮（两块板各 2 键）", on("seat-pro-1"));
+  win.eval('onSerialLine("A2:U", null)'); await sleep(30);
+  ok("A2:U 松开事件不报错", true);
+  win.eval("S.idx=0; applyStage();"); await sleep(60);
+  win.__pub.length = 0;
+  win.eval('onSerialLine("41:D", null)'); await sleep(50);
+  ok("★41:D（一板四键）→ 正方一辩亮", on("seat-pro-1"));
+  ok("★41:D → 发令 side=pro", win.__pub.some(p=>p.action==="down" && p.side==="pro"), JSON.stringify(win.__pub));
+  win.eval("S.idx=0; applyStage();"); await sleep(60);
+  win.__pub.length = 0;
+  win.eval('onSerialLine("43:D", null)'); await sleep(50);
+  ok("★43:D（一板四键）→ 反方一辩亮", on("seat-con-1"));
+  ok("★43:D → 发令 side=con", win.__pub.some(p=>p.action==="down" && p.side==="con"), JSON.stringify(win.__pub));
+  win.eval('onSerialLine("A:BEAT", null)'); await sleep(30);
+  ok("★心跳 A:BEAT 不报错且被识别", /正方板/.test($("serialState").textContent), $("serialState").textContent);
+  ok("未知行不影响（不抛异常）", (()=>{ try{ win.eval('onSerialLine("GARBAGE 123", null)'); return true; }catch(e){ return false; } })());
+
   console.log(`\n结果：${pass} 通过 / ${fail} 失败`);
   process.exit(fail?1:0);
 })();
