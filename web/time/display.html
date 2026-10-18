@@ -638,13 +638,15 @@ function showHelp(){
     <p><b>没有开发板时</b>：可用键盘 <kbd>1</kbd><kbd>2</kbd>（正方两个按钮）、
        <kbd>3</kbd><kbd>4</kbd>（反方两个按钮）模拟抢话；也可直接点击左右两侧的辩位卡片手动置灯。</p>
     <p><b>灯的规则</b>：该发言的一方灯亮；最后 ${WARN_SEC} 秒闪烁；时间到转红并自动进入下一环节；
-       自由辩论谁抢到谁亮，同一人再按一次结束。</p>
+       自由辩论谁抢到谁亮，**一方说完由另一方接话**（同侧接力会被拒绝），同一人再按一次结束。</p>
     <p><b>注意</b>：浏览器要用 Chrome / Edge，且页面必须以 <kbd>https</kbd> 或 <kbd>http://localhost</kbd> 打开，
        Web Serial 才可用（直接双击 file:// 打开时按钮接口不可用，但键盘与鼠标仍可用）。
        用本机 http 打开时同样不可用，请改用 https 入口。</p>
     <p><b>配套程序下载</b>：
        <a href="esp32-button.ino" download>ESP32 按钮程序 · USB 版（esp32-button.ino）</a> ·
-       <a href="esp32-button-wifi.ino" download>ESP32 按钮程序 · WiFi 版（esp32-button-wifi.ino）</a> ·
+       <a href="esp32-button-wifi.ino" download>ESP32 按钮程序 · WiFi 版（通用，含 A/B/4 三种接法）</a> ·
+       <a href="esp32-button-wifi-A.ino" download>WiFi 版 · 正方板（已预置 A）</a> ·
+       <a href="esp32-button-wifi-B.ino" download>WiFi 版 · 反方板（已预置 B）</a> ·
        <a href="start-screen.bat" download>本地启动脚本（start-screen.bat）</a> ·
        <a href="使用说明.md" download>完整使用说明（使用说明.md）</a></p>
     <p style="color:var(--muted)">赛制依据 2026-10-16 筹备会纪要：立论 3′×2、质询 1.5′×2、人人对辩 2.5′、
