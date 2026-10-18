@@ -70,10 +70,12 @@ const dom = new JSDOM(HTML, {
 });
 
 const win = dom.window;
+win.__MY = win.eval("cfg.side") === "反方" ? "反方" : "正方";   // 支持正方训练版与反方训练版
+const MY = win.__MY, OPP = MY === "正方" ? "反方" : "正方";
 const R = []; const ok = (n, c, e = "") => { R.push(!!c); console.log((c ? "✓" : "✗") + " " + n + (e ? "  " + e : "")); };
 function reset() {
   win.eval(`
-    cfg.mode="auto"; cfg.streamMode=true; cfg.diarize=false; cfg.omni=false; cfg.side="正方";
+    cfg.mode="auto"; cfg.streamMode=true; cfg.diarize=false; cfg.attr=true; cfg.floorMode=false; cfg.omni=false; cfg.side=window.__MY;
     cfg.streamMinChars=20; cfg.streamGapMs=7000; cfg.streamTts=true; cfg.speakCooldown=0;
     transcript=[]; queue.length=0; lastSentences=[]; preHold=false; genBusy=false; playing=false;
     lastSpeakAt=0; lastStreamAt=0; streamAtOppChars=0; lastPlayEndAt=0; stopped=false;
@@ -114,7 +116,7 @@ async function makeDraft() {                        // 造出抢跑稿 + 预合�
   await makeDraft();
   fire({ action: "free_idle", source: "display" });
   await sleep(200);
-  fire({ action: "free_grant", side: "反方", source: "display" });   // 人抢到了
+  fire({ action: "free_grant", side: OPP, source: "display" });   // 人抢到了
   await sleep(800);
   const c3 = win.eval("window.__posts").filter(p => p.action === "claim");
   ok("人先抢到后 AI 不再 claim", c3.length === 0, `claims=${c3.length}`);
@@ -122,7 +124,7 @@ async function makeDraft() {                        // 造出抢跑稿 + 预合�
   /* ---------- 3 抢到 + 稿在 → 开口 ---------- */
   console.log("\n======== 3 抢到发言权 → 立刻开口 ========");
   const t0 = Date.now();
-  fire({ action: "free_grant", side: "正方", source: "display" });
+  fire({ action: "free_grant", side: MY, source: "display" });
   let spoke = false;
   for (let i = 0; i < 200; i++) { await sleep(5); if (win.eval("window.__plays") > 0 || win.eval("window.__spk") > 0) { spoke = true; break; } }
   ok("抢到后开口", spoke, spoke ? `${Date.now() - t0} ms` : "未出声");
@@ -131,7 +133,7 @@ async function makeDraft() {                        // 造出抢跑稿 + 预合�
   console.log("\n======== 4 AI 正在播报，对方抢到发言权 → 立刻阻断 ========");
   ok("阻断前处于播报中", win.eval("playing") === true);
   const t1 = Date.now();
-  fire({ action: "free_grant", side: "反方", source: "display" });   // 对方抢到
+  fire({ action: "free_grant", side: OPP, source: "display" });   // 对方抢到
   let aborted = false;
   for (let i = 0; i < 120; i++) { await sleep(5); if (win.eval("playing") === false) { aborted = true; break; } }
   ok("对方抢到 → 播报被中止", aborted, `${Date.now() - t1} ms`);
@@ -143,7 +145,7 @@ async function makeDraft() {                        // 造出抢跑稿 + 预合�
   reset(); fire({ action: "stage", kind: "free", source: "display" });
   await makeDraft();
   win.eval("window.__plays=0; window.__spk=0;");
-  fire({ action: "free_deny", side: "正方", source: "display" });
+  fire({ action: "free_deny", side: MY, source: "display" });
   await sleep(250);
   ok("deny 后不开口", win.eval("window.__plays") === 0 && win.eval("window.__spk") === 0);
 
@@ -152,7 +154,7 @@ async function makeDraft() {                        // 造出抢跑稿 + 预合�
   reset(); fire({ action: "stage", kind: "cross", source: "display" });
   await makeDraft();
   win.eval("window.__plays=0; window.__spk=0;");
-  fire({ action: "down", side: "反方", source: "button" });
+  fire({ action: "down", side: OPP, source: "button" });
   let spoke2 = false;
   for (let i = 0; i < 200; i++) { await sleep(5); if (win.eval("window.__plays") > 0 || win.eval("window.__spk") > 0) { spoke2 = true; break; } }
   ok("非自由辩论 down 仍直接开口", spoke2);
@@ -162,9 +164,67 @@ async function makeDraft() {                        // 造出抢跑稿 + 预合�
   reset(); fire({ action: "stage", kind: "free", source: "display" });
   await makeDraft();
   win.eval("window.__plays=0; window.__spk=0;");
-  fire({ action: "down", side: "反方", source: "button" });
+  fire({ action: "down", side: OPP, source: "button" });
   await sleep(250);
   ok("自由辩论 down 不直接开口", win.eval("window.__plays") === 0 && win.eval("window.__spk") === 0);
+
+  /* ---------- 8 AI 让手时间可调（0~1000ms） ---------- */
+  const nClaims = () => win.eval("window.__posts").filter(p => p.action === "claim").length;
+  const caseDelay = async (delay, expectAt, label) => {
+    reset(); win.eval(`cfg.freeClaimDelay=${delay};`);
+    fire({ action: "stage", kind: "free", source: "display" });
+    await makeDraft();
+    const t = Date.now();
+    fire({ action: "free_idle", source: "display" });
+    const before = expectAt - 60;
+    if (before > 0) await sleep(before);
+    const early = nClaims();
+    let okAt = false;
+    for (let i = 0; i < 400; i++) { await sleep(5); if (nClaims() > 0) { okAt = true; break; } }
+    const ms = Date.now() - t;
+    ok(`让手 ${label}：等到点才抢`, okAt && early === 0 && ms >= expectAt - 20, `${ms}ms（期望≥${expectAt}）`);
+  };
+
+  console.log("\n======== 8 AI 让手时间可调（0~1000ms） ========");
+  await caseDelay(0, 0, "0ms（立即抢）");
+  await caseDelay(300, 300, "300ms");
+  await caseDelay(1000, 1000, "1000ms");
+
+  /* 让手期内有人抢到 → AI 放弃 */
+  reset(); win.eval("cfg.freeClaimDelay=800;");
+  fire({ action: "stage", kind: "free", source: "display" });
+  await makeDraft();
+  fire({ action: "free_idle", source: "display" });
+  await sleep(200);
+  fire({ action: "free_grant", side: OPP, source: "display" });
+  await sleep(900);
+  ok("让手期内人抢到 → AI 放弃不 claim", nClaims() === 0, `claims=${nClaims()}`);
+
+  /* 滑块取值钳制：越界不会崩，且落在 0~1000 */
+  win.eval(`cfg.freeClaimDelay=700;
+    $("cfgFreeDelay").value=1500; saveSettings();
+    window.__d1=cfg.freeClaimDelay;
+    $("cfgFreeDelay").value=-50; saveSettings();
+    window.__d2=cfg.freeClaimDelay;
+    cfg.freeClaimDelay=window.__d1;`);
+  ok("滑块上界钳制 1500→1000", win.eval("window.__d1") === 1000, String(win.eval("window.__d1")));
+  ok("滑块下界钳制 -50→0", win.eval("window.__d2") === 0, String(win.eval("window.__d2")));
+
+  /* ---------- 5 交替发言：上一句是我方 → 不抢 ---------- */
+  console.log("\n======== 5 自由辩论必须交替：上一句是我方就不抢 ========");
+  reset(); fire({ action: "stage", kind: "free", source: "display" });
+  await makeDraft();
+  fire({ action: "free_idle", last: OPP, source: "display" });   // 上一句是对方 → 该我方
+  await sleep(900);
+  const cOppLast = win.eval("window.__posts").filter(p => p.action === "claim");
+  ok("上一句是对方 → 正常抢", cOppLast.length >= 1, `claims=${cOppLast.length}`);
+  reset(); fire({ action: "stage", kind: "free", source: "display" });
+  await makeDraft();
+  fire({ action: "free_idle", last: MY, source: "display" });    // 上一句是我方 → 该对方
+  await sleep(900);
+  const cMyLast = win.eval("window.__posts").filter(p => p.action === "claim");
+  ok("★上一句是我方 → 不抢（等对方接话）", cMyLast.length === 0, `claims=${cMyLast.length}`);
+  ok("★内部已记录「上一句是我方」", win.eval("freeLastSide") === "ours", String(win.eval("freeLastSide")));
 
   const pass = R.filter(Boolean).length;
   console.log(`\n结果：${pass} 通过 / ${R.length - pass} 失败`);

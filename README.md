@@ -105,7 +105,7 @@ curl http://127.0.0.1:8000/healthz
 | 切换环节 | `stage{kind, side, seat, target, floor:"hall"}` | **主席 / 环节过渡**（环节之间的间隙必然是主席串场） |
 | 大屏按空格开始计时 | `floor{who, reason:"stage-start"}` | 本环节默认发言方 |
 | 选手按实体按钮 | `down{side, stage}` + `floor{who, reason:"button"}` | 该侧真人 |
-| 自由辩论抢话 | `free_grant / free_deny / free_idle` | 抢到的一方（AI 让手 0~1000ms 可调） |
+| 自由辩论抢话 | `free_grant / free_deny / free_idle{last}` | 抢到的一方（**必须交替**，见下；AI 让手 0~1000ms 可调） |
 | AI 说完 | `ai_done` → 大屏广播 `floor` / `free_idle` | 交回对方 / 空出 |
 | 计时停止 | `floor{who:"hall", reason:"stage-stop"}` | 回到主席 |
 
@@ -120,6 +120,24 @@ curl http://127.0.0.1:8000/healthz
 - **主席兜底**：`感谢正方一辩。下面有请反方二辩…` 这类串场语即使落在辩手时段也记为会场（纯正则，零调用），否则会被当成对方发言、触发误接话。
 - **安全阀**：若从未收到任何大屏信息（单机调试），自动回退到 AI 识别，避免「一片都归会场、AI 永不接话」。
 - **收益**：省掉每段 4~20 秒的归属判定；抢跑判定从「猜尾部是谁」变成「floor === opp」；失误来源从模型判断转为流程记录。
+
+### 自由辩论必须交替：一方说完，下一句归另一方
+
+自由辩论最容易出错的不是「谁抢到」，而是「同侧接力」——正方一辩说完、正方三辩接着抢，评委会当成一整段。
+
+大屏的仲裁因此按「交替」来实现（`S.freeLast` 记住上一句是谁）：
+
+| 情况 | 结果 |
+|---|---|
+| 同一人再按 | 本句结束（`free_idle{last:side}`，灯灭，等对方） |
+| 同侧**另一位**按（本方正在说） | **拒绝** `free_deny{reason:"same-side"}`，提示「不得同侧接力，请对方接话」 |
+| 空闲但上一句也是这一方 | **拒绝** `free_deny{reason:"need-turn"}`，提示「该对方接话」 |
+| 对方按 | **接话** `free_grant{side}`，灯换人，计时不重置 |
+
+配套两点：
+
+- AI 抢话也受约束：`free_idle` 带回 `last`，智能体记到 `freeLastSide`；上一句是我方时**根本不发 claim**（不刷屏、不白等）。
+- `free_deny` 分两类：`reason:"claim"`（AI 主动抢、被拒 → 立刻闭嘴）；按钮侧的 `same-side` / `need-turn` 与 AI 无关，**不会**掐掉正在说话的 AI（否则队友按错键会把 AI 说一半打断）。
 
 ### 质询环节是唯一例外：必须开识别
 

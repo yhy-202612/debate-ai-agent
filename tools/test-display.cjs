@@ -64,7 +64,9 @@ const on=id=>win.document.getElementById(id).classList.contains("on");
   win.document.dispatchEvent(new win.KeyboardEvent("keydown",{key:"1",bubbles:true})); await sleep(150);
   ok("按键 1 → 正方一辩抢到", on("seat-pro-1"));
   win.document.dispatchEvent(new win.KeyboardEvent("keydown",{key:"2",bubbles:true})); await sleep(150);
-  ok("换人按键 2 → 交接给正方三辩", on("seat-pro-3") && !on("seat-pro-1"));
+  ok("★同侧按键 2（正三）被拒 → 仍是正一在说", on("seat-pro-1") && !on("seat-pro-3"));
+  win.document.dispatchEvent(new win.KeyboardEvent("keydown",{key:"3",bubbles:true})); await sleep(150);
+  ok("★对方按键 3（反一）→ 接话", on("seat-con-1") && !on("seat-pro-1"));
 
   // ★质询环节：按钮只亮灯/计时，绝不发 floor（该环节双方交替发言，靠识别）
   win.eval("S.idx=3; applyStage();"); await sleep(120);
@@ -139,15 +141,49 @@ const on=id=>win.document.getElementById(id).classList.contains("on");
   ok("已订阅发令总线（WiFi 按钮用）", !!es2, es2 && es2.url);
   win.eval("S.idx=7; applyStage();"); await sleep(120);   // 自由辩论
   ok("自由辩论：初始无灯", !on("seat-pro-1") && !on("seat-con-1"));
-  es2.onmessage({data: JSON.stringify({action:"down", side:"正方", seat:"1", source:"button", board:"A"})});
-  await sleep(150);
+  const press = async (side, seat) => { win.__pub.length=0;
+    es2.onmessage({data: JSON.stringify({action:"down", side, seat:String(seat), source:"button", board: side==="正方"?"A":"B"})}); await sleep(120); };
+  const pubHas = (fn) => win.__pub.some(fn);
+
+  await press("正方", 1);
   ok("★WiFi 按钮 → 正方一辩亮灯（等同本地按键）", on("seat-pro-1"));
-  es2.onmessage({data: JSON.stringify({action:"down", side:"反方", seat:"1", source:"button", board:"B"})});
-  await sleep(150);
-  ok("★WiFi 按钮：对方持话时不得插话（灯不变）", on("seat-pro-1") && !on("seat-con-1"));
+  ok("首次按 = 抢到发言", pubHas(p=>p.action==="free_grant"));
+
+  /* ★交替规则 1：同侧另一位按 → 拒绝，灯不变 */
+  await press("正方", 3);
+  ok("★同侧接力被拒（正三按了不亮，正一仍亮）", on("seat-pro-1") && !on("seat-pro-3"));
+  ok("★同侧接力回 free_deny(reason=same-side)", pubHas(p=>p.action==="free_deny" && p.reason==="same-side"), JSON.stringify(win.__pub));
+  ok("提示写明「不得同侧接力」", /不得同侧接力/.test($("hint").textContent), $("hint").textContent);
+
+  /* ★交替规则 2：对方按 → 接话（灯换人） */
+  await press("反方", 1);
+  ok("★对方按 = 接话（反一亮、正一灭）", on("seat-con-1") && !on("seat-pro-1"));
+  ok("交接广播 free_grant", pubHas(p=>p.action==="free_grant"));
+
+  /* 反方三辩想接力 → 也拒 */
+  await press("反方", 3);
+  ok("★反方三辩同侧接力同样被拒", on("seat-con-1") && !on("seat-con-3"));
+
+  /* 同一人再按 = 结束 */
+  await press("反方", 1);
+  ok("同一人再按 → 结束（灯灭）", !on("seat-con-1"));
+  ok("结束时广播 free_idle", pubHas(p=>p.action==="free_idle"));
+
+  /* ★交替规则 3：空闲状态下也不能同侧连胜 */
+  await press("反方", 3);
+  ok("★反方刚说完，反三再按被拒（need-turn）", !on("seat-con-3"));
+  ok("回 free_deny(reason=need-turn)", pubHas(p=>p.action==="free_deny" && p.reason==="need-turn"), JSON.stringify(win.__pub));
+  await press("正方", 1);
+  ok("换成正方 → 正常接话", on("seat-pro-1"));
+
+  /* AI 说完也记「上一句是这一方」 */
   es2.onmessage({data: JSON.stringify({action:"ai_done", side:"正方", source:"ai"})});
   await sleep(150);
-  ok("★AI 说完 → 释放发言权（灯灭，可再抢）", !on("seat-pro-1"));
+  ok("★AI 说完 → 释放发言权（灯灭）", !on("seat-pro-1"));
+  await press("正方", 3);
+  ok("★AI 说完后同侧再按被拒", !on("seat-pro-3"));
+  await press("反方", 3);
+  ok("★AI 说完后对方可接话", on("seat-con-3"));
 
   console.log(`\n结果：${pass} 通过 / ${fail} 失败`);
   process.exit(fail?1:0);

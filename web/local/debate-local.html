@@ -1697,6 +1697,7 @@ function stopMic(){
   preHold=false; lastStreamAt=0; streamAtOppChars=0;   // 清理流式抢跑状态
   floorWho=""; floorSrc="";                            // 重新倾听时发言人状态归零
   curTarget=null; curStageName=""; aiOnStage=true;      // 环节信息复位（未连大屏时不限制 AI 开口）
+  freeLastSide="";                                      // 自由辩论「上一句是谁」复位
   try{ clearTimeout(speakTimer); }catch(e){}
   try{ if(procNode){procNode.disconnect(); procNode.onaudioprocess=null;} }catch(e){}
   try{ if(hpNode) hpNode.disconnect(); }catch(e){}
@@ -2490,8 +2491,13 @@ function abortSpeak(reason){
   const st=$("speakState"); if(st) st.textContent="已阻断："+(reason||"未抢到发言权");
 }
 /* 参与抢答：稿子没生成就不抢（避免抢到却没内容、或边抢边等出稿） */
+let freeLastSide = "";      // 自由辩论里「刚刚说完的是哪一方」（大屏 free_idle.last 回传）→ 我方不能连续说
 function claimFree(){
   if(!freeMode) return false;
+  if(freeLastSide === "ours"){       // ★上一句也是我方 → 论到对方，不抢
+    const st=$("speakState"); if(st) st.textContent="自由辩论：上一句是我方，等对方接话";
+    return false;
+  }
   if(!lastSentences.length && !queue.length) return false;
   if(claimPending) return true;
   claimPending = true;
@@ -2513,7 +2519,7 @@ function buzzStart(){
       const st = ()=>$("speakState");
       /* 大屏广播环节类型 → ①是否自由辩论 ②环节过渡期发言权默认归主席 */
       if(act === "stage"){
-        const was = freeMode; freeMode = (ev.kind === "free"); freeOwner = "";
+        const was = freeMode; freeMode = (ev.kind === "free"); freeOwner = ""; freeLastSide = "";
         curStage = (typeof ev.stage === "number") ? ev.stage : curStage;
         curKind  = ev.kind || "";
         curStageSide = ev.side || "";
@@ -2536,6 +2542,7 @@ function buzzStart(){
       /* 仲裁结果：谁抢到了发言权 */
       if(act === "free_grant"){
         freeOwner = side;
+        freeLastSide = sideWho(side) || freeLastSide;
         setFloor(sideWho(side), "free");
         if(sideWho(side) === "ours"){
           if(lastSentences.length || queue.length) speakNow();
@@ -2547,12 +2554,15 @@ function buzzStart(){
       }
       if(act === "free_deny"){
         setFloor(sideWho(side), "free");
-        if(sideWho(side) === "ours") abortSpeak("未抢到发言权");
+        /* ★只有「AI 的 claim 被拒」才闭嘴；按钮侧的 deny（同侧接力/该换边）与 AI 无关，
+           否则我方队友按错键会把正在说话的 AI 掐掉 */
+        if(sideWho(side) === "ours" && (ev.reason === "claim" || !ev.reason)) abortSpeak("未抢到发言权");
         return;
       }
       /* 发言权空出来了 → 有稿才去抢 */
       if(act === "free_idle"){
         freeOwner = ""; setFloor("hall", "free-idle");
+        if(ev.last) freeLastSide = sideWho(ev.last) || freeLastSide;
         /* ★ AI 让手：人按按钮有 200~300ms 反应时间，AI 若即时抢会几乎必胜、垄断发言权。
            这里刻意等一手（默认 700ms），期间若有人抢到（freeOwner 被赋值）就放弃。 */
         if(freeMode){

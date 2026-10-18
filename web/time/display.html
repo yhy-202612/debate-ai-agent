@@ -187,6 +187,7 @@ const S = {
   tick: null,
   lastBeep: null,
   freeOwner: null,      // 自由辩论：当前持话方 {side,seat}
+  freeLast: null,       // 自由辩论：上一次发言方 "pro"|"con"（★下一句必须由另一方说）
   finished: false,
 };
 
@@ -374,7 +375,7 @@ function finishStage(){
 /* ---------- 环节切换 ---------- */
 function applyStage(){
   const st = RULES[S.idx];
-  S.remain = st.sec; S.lastBeep = null; S.freeOwner = null;
+  S.remain = st.sec; S.lastBeep = null; S.freeOwner = null; S.freeLast = null;
   stopClock(); clearLights();
   if(st.kind === "free"){
     hintEl.textContent = "自由辩论 · 按按钮抢话（按两次=开始/结束）";
@@ -492,9 +493,9 @@ function buzzListen(){
         if(st.kind === "free"){
           const minePro = (ev.side === "反方" || ev.side === "con") ? "con" : "pro";
           if(!S.freeOwner || S.freeOwner.side === minePro){
-            S.freeOwner = null; stopClock(); clearLights();
-            hintEl.textContent = "自由辩论 · 等待抢话";
-            buzzPub({action:"free_idle", stage:S.idx});
+            S.freeOwner = null; S.freeLast = minePro; stopClock(); clearLights();
+            hintEl.textContent = "自由辩论 · " + (minePro==="pro"?"正方":"反方") + "AI 说完，等对方接话";
+            buzzPub({action:"free_idle", stage:S.idx, last:minePro});
           }
         }else{
           const back = (st.side === "both") ? "pro" : st.side;
@@ -504,9 +505,11 @@ function buzzListen(){
       }
       if(ev.action === "claim"){
         const st = RULES[S.idx];
-        if(st.kind !== "free") { buzzPub({action:"free_deny", side:ev.side}); return; }
-        if(S.freeOwner){ buzzPub({action:"free_deny", side:ev.side}); return; }
+        if(st.kind !== "free") { buzzPub({action:"free_deny", side:ev.side, reason:"claim"}); return; }
+        if(S.freeOwner){ buzzPub({action:"free_deny", side:ev.side, reason:"claim"}); return; }
         const side = (ev.side === "正方") ? "pro" : "con";
+        /* ★交替规则：上一句也是这一方 → 不允许（必须换边） */
+        if(S.freeLast === side){ buzzPub({action:"free_deny", side:ev.side, reason:"claim"}); return; }
         S.freeOwner = { side, seat: side === "pro" ? 2 : 2 };   // AI 为二辩
         setSpeaker(side, 2); startClock(); beep(1, 1040);
         hintEl.textContent = (side==="pro"?"正方":"反方") + "二辩（AI）抢到发言";
@@ -532,31 +535,40 @@ function onSeat(side, seat){
   const st = RULES[S.idx];
 
   if(st.kind === "free"){
-    // 自由辩论：第一次按=抢到（亮灯+开始计时），同一人再按=结束
-    if(S.freeOwner && S.freeOwner.side===side && S.freeOwner.seat===seat){
-      stopClock(); S.freeOwner = null; clearLights();
-      hintEl.textContent = "自由辩论 · 等待抢话";
+    /* ★自由辩论是「交替发言」：一方说完，下一句必须由另一方说。
+       因此：同一人再按 = 结束；同侧另一位按 = 拒绝（不得同侧接力）；对方按 = 接话。 */
+    const cn = (side === "pro" ? "正方" : "反方");
+    const other = (side === "pro" ? "反方" : "正方");
+    // ① 同一人再按 → 结束本句（发言权空出，等对方）
+    if(S.freeOwner && S.freeOwner.side === side && S.freeOwner.seat === seat){
+      stopClock(); S.freeOwner = null; S.freeLast = side; clearLights();
+      hintEl.textContent = "自由辩论 · " + cn + "说完，等" + other + "接话";
       beep(1, 520);
-      buzzPub({action:"free_idle"});                 // 发言权空出 → 通知 AI 可抢（有稿才抢）
-    }else if(S.freeOwner && S.freeOwner.side !== side){
-      /* 对方正在说 → 不得插话（一次一人），明确回一条「没抢到」 */
-      beep(1, 300);
-      buzzPub({action:"free_deny", side});
-    }else if(S.freeOwner){
-      /* 同侧换人（一辩↔三辩）→ 交接，发言权仍在本方 */
-      S.freeOwner = { side, seat };
-      setSpeaker(side, seat);
-      hintEl.textContent = (side==="pro"?"正方":"反方") + SEAT_NAME[seat] + " 接话";
-      beep(1, 880);
-      buzzPub({action:"free_grant", side});
-    }else{
-      S.freeOwner = { side, seat };
-      setSpeaker(side, seat);
-      // 自由辩论共用同一倒计时，抢话不重置剩余时间
-      startClock(); beep(1, 1040);
-      hintEl.textContent = (side==="pro"?"正方":"反方") + SEAT_NAME[seat] + " 抢到发言";
-      buzzPub({action:"free_grant", side});          // ★ AI 若没抢到会立刻闭嘴
+      buzzPub({action:"free_idle", stage:S.idx, last:side});   // 发言权空出；带上「刚说完的是哪一方」
+      return;
     }
+    // ② 本方正在说，另一位同侧辩手按 → 拒绝（不能同侧接力）
+    if(S.freeOwner && S.freeOwner.side === side){
+      beep(1, 300);
+      hintEl.textContent = cn + SEAT_NAME[S.freeOwner.seat] + "正在发言 · 不得同侧接力，请" + other + "接话";
+      buzzPub({action:"free_deny", side, reason:"same-side"});
+      return;
+    }
+    // ③ 空闲但上一次也是这一方 → 拒绝（必须换边）
+    if(!S.freeOwner && S.freeLast === side){
+      beep(1, 300);
+      hintEl.textContent = "该" + other + "接话（上一次也是" + cn + "）";
+      buzzPub({action:"free_deny", side, reason:"need-turn"});
+      return;
+    }
+    // ④ 对方接话 / 开场第一位
+    const isHandoff = !!S.freeOwner;
+    S.freeOwner = { side, seat }; S.freeLast = side;
+    setSpeaker(side, seat);
+    if(!S.running) startClock();                     // 自由辩论共用同一倒计时，接话不重置
+    beep(1, isHandoff ? 880 : 1040);
+    hintEl.textContent = cn + SEAT_NAME[seat] + (isHandoff ? " 接话" : " 抢到发言");
+    buzzPub({action:"free_grant", side});
     return;
   }
   // 其它环节：按钮 = 发言开始/结束（兼计时）
