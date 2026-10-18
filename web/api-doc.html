@@ -476,6 +476,12 @@ rebut(&quot;对方说AI会侵蚀人的判断力，让能力退化。&quot;,
 <li>智能体侧开关：<code>floorMode</code>（默认开）走流程判定；<code>attr</code>（默认关）仍可调 <code>/api/attribute</code> 做 AI 判定</li>
 <li>未收到任何大屏信息时自动回退到 <code>/api/attribute</code></li>
 </ul>
+<p><strong>质询环节例外</strong>：<code>kind:"quiz"</code> 是一问一答、双方交替开口，按钮/流程无法表达「现在是谁在说」。</p>
+<ul>
+<li>大屏在质询环节按按钮<strong>只亮灯/计时，不发 <code>floor</code></strong>；</li>
+<li>智能体侧 <code>quizAttr</code>（默认开）→ 本环节<strong>无条件</strong>调 <code>/api/attribute</code>（不看 <code>attr</code>、不采信 <code>floor</code>）；</li>
+<li>若该环节已做说话人分离并映射好标签，仍优先用映射。</li>
+</ul>
 <h2>4.7 分段续写（边播边生成）</h2>
 <p><code>POST /api/rebut</code> 与 <code>/api/rebut-omni</code> 支持把一次长发言拆成「前段 + 续写段」：</p>
 <pre><code class="language-json">{
@@ -541,4 +547,5 @@ rebut(&quot;对方说AI会侵蚀人的判断力，让能力退化。&quot;,
 <p><strong>Q：首句要等 5 秒？</strong> 那是级联通道（<code>/api/rebut</code>）。要更快用 <code>/api/rebut-omni</code>（首音约 1 秒）。</p>
 <p><strong>Q：脚本报证书错误？</strong> 自签证书，<code>curl -k</code> 或 <code>verify=False</code>。</p>
 <p><strong>Q：为什么 <code>/api/rebut</code> 的 <code>duration</code> 限制 30–60？</strong> 对应 30 秒与 60 秒两种发言时长；45 秒约出 250~300 字。</p>
-</div></body></html>
+</div>
+</body></html>

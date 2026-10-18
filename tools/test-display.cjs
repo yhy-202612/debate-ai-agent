@@ -5,7 +5,11 @@ const HTML_PATH="/sandbox/workspace/output/辩论大屏/time/display.html";
 const HTML=fs.readFileSync(HTML_PATH,"utf8");
 const dom=new JSDOM(HTML,{runScripts:"dangerously",pretendToBeVisual:true,url:"http://localhost:8080/display.html",
   beforeParse(win){
-    win.__es = [];
+    win.__es = []; win.__pub = [];
+    win.fetch = async (u, opt) => {
+      try{ if(String(u).includes("/api/buzzer") && opt && opt.body) win.__pub.push(JSON.parse(opt.body)); }catch(e){}
+      return { ok:true, status:200, json:async()=>({ok:true}), text:async()=>"{}", headers:{get:()=>null} };
+    };
     win.EventSource = class {
       constructor(u){ this.url = u; this.onmessage = null; win.__es.push(this); }
       addEventListener(){} close(){}
@@ -30,9 +34,10 @@ const on=id=>win.document.getElementById(id).classList.contains("on");
   ok("反方无灯亮", !on("seat-con-1"));
 
   $("btnNext").click(); await sleep(150);
-  ok("下一环节=反方一辩立论", /反方一辩/.test($("stageName").textContent), $("stageName").textContent);
-  ok("反方一辩灯亮", on("seat-con-1"));
-  ok("正方灯已灭", !on("seat-pro-1"));
+  ok("★下一环节=反方三辩质询正方一辩（质询紧跟在本方一辩立论后）", /质询/.test($("stageName").textContent) && /反方三辩/.test($("stageName").textContent) && /正方一辩/.test($("stageName").textContent), $("stageName").textContent);
+  ok("质询方反方三辩灯亮", on("seat-con-3"));
+  ok("被质询方正方一辩灯亮", on("seat-pro-1"));
+  ok("正方三辩未误亮", !on("seat-pro-3"));
 
   $("btnStart").click(); await sleep(1200);
   ok("开始后计时递减（<03:00）", $("clock").textContent!=="03:00", $("clock").textContent);
@@ -61,10 +66,43 @@ const on=id=>win.document.getElementById(id).classList.contains("on");
   win.document.dispatchEvent(new win.KeyboardEvent("keydown",{key:"2",bubbles:true})); await sleep(150);
   ok("换人按键 2 → 交接给正方三辩", on("seat-pro-3") && !on("seat-pro-1"));
 
+  // ★质询环节：按钮只亮灯/计时，绝不发 floor（该环节双方交替发言，靠识别）
+  win.eval("S.idx=3; applyStage();"); await sleep(120);
+  ok("质询环节提示「自动识别谁在说」", /自动识别/.test($("hint").textContent), $("hint").textContent);
+  win.__pub.length = 0;
+  win.document.dispatchEvent(new win.KeyboardEvent("keydown",{key:"1",bubbles:true})); await sleep(150);
+  ok("质询环节按按钮仍亮灯", on("seat-pro-1"));
+  ok("★质询环节按钮不发 floor", !win.__pub.some(p=>p.action==="floor" && p.reason==="button"), JSON.stringify(win.__pub));
+  ok("★质询环节按钮提示写明自动识别", /自动识别/.test($("hint").textContent), $("hint").textContent);
+
+  // 对照：非质询环节按钮照常发 floor
+  win.eval("S.idx=0; applyStage();"); await sleep(100);
+  win.__pub.length = 0;
+  win.document.dispatchEvent(new win.KeyboardEvent("keydown",{key:"1",bubbles:true})); await sleep(150);
+  ok("对照：立论环节按钮照常发 floor", win.__pub.some(p=>p.action==="floor" && p.who==="pro"), JSON.stringify(win.__pub));
+
+  // 键位提示开关
+  ok("初始：键位提示开着（按钮含括号）", /（空格）/.test($("btnStart").textContent), $("btnStart").textContent);
+  win.document.dispatchEvent(new win.KeyboardEvent("keydown",{key:"k",bubbles:true})); await sleep(80);
+  ok("★按 K → body 带 hidekeys（键位括号隐藏）", win.document.body.classList.contains("hidekeys"), win.document.body.className);
+  ok("★按钮文案：键位提示：关", /键位提示：关/.test($("btnKeys").textContent), $("btnKeys").textContent);
+  win.eval("S.idx=0; applyStage();"); await sleep(60);
+  ok("★隐藏时中央不再显示「按 空格」", !/按 空格/.test($("hint").textContent), $("hint").textContent);
+  win.document.dispatchEvent(new win.KeyboardEvent("keydown",{key:"k",bubbles:true})); await sleep(80);
+  ok("★再按 K → 恢复", !win.document.body.classList.contains("hidekeys") && /键位提示：开/.test($("btnKeys").textContent), $("btnKeys").textContent);
+
   // 质询环节双灯
-  win.eval("S.idx=2; applyStage();"); await sleep(120);
+  win.eval("S.idx=3; applyStage();"); await sleep(120);
+  ok("质询②：正方三辩质询反方一辩", /正方三辩/.test($("stageName").textContent) && /反方一辩/.test($("stageName").textContent), $("stageName").textContent);
   ok("质询：质询方三辩亮", on("seat-pro-3"));
   ok("质询：被质询方一辩也亮", on("seat-con-1"));
+
+  // ★赛制顺序：一辩立论 → 对方三辩质询，交替
+  const order = win.eval("RULES.map(r=>r.name)");
+  ok("★赛制顺序正确（立论/质询交替，质询紧跟本方立论）",
+     /正方一辩/.test(order[0]) && /质询/.test(order[1]) && /反方三辩/.test(order[1]) && /反方一辩/.test(order[2]) && /质询/.test(order[3]) && /正方三辩/.test(order[3]),
+     order.slice(0,4).join(" | "));
+  ok("赛制共 10 环节", order.length===10, String(order.length));
 
   // 与智能体联动：模拟服务端 SSE 推送
   const es = win.__es[0];

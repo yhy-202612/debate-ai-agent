@@ -381,6 +381,9 @@ function applyStage(){
   }else if(st.kind === "duel"){
     hintEl.textContent = "双向对辩 · 轮流发言";
     setSpeaker(st.side === "both" ? "pro" : st.side, 1);
+  }else if(st.kind === "quiz"){
+    setSpeaker(st.side, st.seat);   // 质询方三辩亮，setSpeaker 内会自动点亮 target（被质询方一辩）
+    hintEl.textContent = "质询 · 双方交替发言（自动识别谁在说）";
   }else if(st.kind === "cross"){
     setSpeaker(st.side, st.seat);
     hintEl.textContent = "交叉对辩 · 人与对方 AI 直接交锋";
@@ -561,9 +564,15 @@ function onSeat(side, seat){
     stopClock(); hintEl.textContent = "发言结束（已暂停计时）";
   }else{
     setSpeaker(side, seat); startClock();
-    /* 按钮按下 = 该侧真人开始发言（质询环节里被质询方回答也走这里） */
-    buzzPub({action:"floor", who: side, seat, stage: S.idx, reason:"button"});
-    hintEl.textContent = (side==="pro"?"正方":"反方") + SEAT_NAME[seat] + " 开始发言";
+    /* ★质询环节：一问一答双方交替开口，按钮无法表达「现在是哪一方」——
+       只亮灯/计时，**不发 floor**，让智能体按声纹/识别自行判定谁在说。 */
+    if(st.kind === "quiz"){
+      hintEl.textContent = (side==="pro"?"正方":"反方") + SEAT_NAME[seat] + " 开口（本环节自动识别发言人）";
+    }else{
+      /* 按钮按下 = 该侧真人开始发言 */
+      buzzPub({action:"floor", who: side, seat, stage: S.idx, reason:"button"});
+      hintEl.textContent = (side==="pro"?"正方":"反方") + SEAT_NAME[seat] + " 开始发言";
+    }
   }
 }
 // 键盘兜底：1/2 = 正方两个按钮，3/4 = 反方两个按钮

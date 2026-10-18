@@ -263,6 +263,7 @@
           <div class="sw" style="align-self:end;margin-top:16px"><input type="checkbox" id="cfgDiarize"> 说话人分离自动归属（需把识别模型选为「说话人分离」）</div>
           <div class="sw" style="margin-top:8px"><input type="checkbox" id="cfgFloorMode" checked> <b>按赛制流程判定发言人（推荐）</b>：用大屏环节 + 实体按钮回传直接确定「现在谁在说」，不再让 AI 猜；环节切换间隙默认主席<span class="mini"></span></div>
           <div class="sw" style="margin-top:8px"><input type="checkbox" id="cfgAttr"> 用 AI 识别发言方（/api/attribute）· 关闭可省调用与延迟，仅在流程信息缺失时才有必要开启</div>
+          <div class="sw" style="margin-top:8px"><input type="checkbox" id="cfgQuizAttr" checked> <b>质询环节自动识别发言人（推荐保持开启）</b>：质询是一问一答双方交替开口，按钮无法表达「现在谁在说」，本环节一律按识别判定；关闭后质询期间的归属会退化为「会场」</div>
         </div>
         <div class="hint">「说话人分离自动归属」：识别结果带「1: / 2:」说话人编号时，首次点击标注谁是对方/我方，之后同一编号自动归属，省去逐段大模型判定；未选分离模型时自动回退为模型判定。</div>
         <details style="margin-top:10px">
@@ -710,6 +711,7 @@ function fillSettings(){
   if($("cfgAudioHeal")) $("cfgAudioHeal").checked = cfg.audioHeal===true;
   if($("cfgFloorMode")) $("cfgFloorMode").checked = cfg.floorMode!==false;
   if($("cfgAttr")) $("cfgAttr").checked = cfg.attr===true;
+  if($("cfgQuizAttr")) $("cfgQuizAttr").checked = cfg.quizAttr!==false;
   if($("cfgChunked")) $("cfgChunked").checked = cfg.chunked!==false;
   if($("cfgChunkRatio")) $("cfgChunkRatio").value = (cfg.chunkRatio==null?0.45:cfg.chunkRatio);
   $("cfgStreamMode").checked=!!cfg.streamMode;
@@ -768,6 +770,7 @@ function saveSettings(){
   cfg.audioHeal = !!(($("cfgAudioHeal")||{}).checked);
   cfg.floorMode = $("cfgFloorMode") ? $("cfgFloorMode").checked : (cfg.floorMode!==false);
   cfg.attr = $("cfgAttr") ? $("cfgAttr").checked : !!cfg.attr;
+  cfg.quizAttr = $("cfgQuizAttr") ? $("cfgQuizAttr").checked : (cfg.quizAttr!==false);
   cfg.chunked = $("cfgChunked") ? $("cfgChunked").checked : (cfg.chunked!==false);
   if($("cfgChunkRatio")){
     let r = parseFloat($("cfgChunkRatio").value);
@@ -967,6 +970,22 @@ let preAudioBuf=[];   // Omni 抢跑期间缓存的 PCM 块（说完后一次性
 let floorWho = "";        // "ours" | "opp" | "hall" | "both" | ""
 let floorSrc = "";        // 来源标记，仅用于界面提示
 let curStage = -1, curKind = "", curStageSide = "";   // 大屏回传的环节信息
+let curTarget = null, curStageName = "";              // 大屏回传的环节对象/名称
+/* ★本环节我方 AI 是否在场：只有「人机对辩」且对方 vs 我方二辩、以及「自由辩论」时我方二辩才在台上。
+   其余环节（立论/质询/结辩/人人对辩）我方二辩不在场，不应自动开口。未连大屏（curStage<0）时不限制。 */
+let aiOnStage = true;
+function recomputeAiOnStage(){
+  if(curStage < 0){ aiOnStage = true; return; }
+  if(curKind === "free"){ aiOnStage = true; return; }
+  if(curKind === "cross"){
+    /* target 缺失时保守放行，避免大屏协议缺字段导致 AI 永不开口 */
+    if(!curTarget){ aiOnStage = true; return; }
+    aiOnStage = (sideWho(curTarget.side) === "ours" && Number(curTarget.seat) === 2);
+    return;
+  }
+  if(curKind === "duel" || curKind === "quiz" || curKind === "forced"){ aiOnStage = false; return; }
+  aiOnStage = true;
+}
 const FLOOR_LABEL = { ours:"我方", opp:"对方", hall:"主席 / 环节过渡", both:"双方（未定）", "":"未确定" };
 function sideWho(side){          // "pro"|"con"|"正方"|"反方"|"A"|"B" → ours/opp
   const s = String(side||""); let p = "";
@@ -1027,11 +1046,14 @@ async function ingest(raw, segs){
   /* ── 归属三分支 ────────────────────────────────────────────────
      ①声纹标签已映射 → 直接用；
      ②「识别发言方」开关（cfg.attr）开 → 调 /api/attribute（原逻辑，保留为可选项）；
+     ②' 质询环节（curKind==="quiz"）→ 无条件走识别（双方交替开口，按钮判定不准）；
      ③否则（默认）→ 直接按流程 floor 落归属，零调用、零延迟。 */
   /* 没连大屏（从未收到环节/发言人信息）时，流程驱动无从谈起 → 自动回退到 AI 识别，
      否则会「一片都归会场、AI 永不接话」。这是单机/离线场景的安全阀。 */
   const haveFlow = (curStage >= 0) || !!floorWho;
-  const useAttr = !!cfg.attr || !haveFlow;
+  /* ★质询环节：一问一答双方交替开口，按钮/流程无法表达「现在谁在说」→ 强制走识别 */
+  const quizAttr = (curKind === "quiz") && (cfg.quizAttr !== false);
+  const useAttr = !!cfg.attr || !haveFlow || quizAttr;
   if(!mappedWho && !useAttr){
     const byFloor = (cfg.floorMode === false) ? "" : floorWho;
     if(byFloor === "ours" || byFloor === "opp"){
@@ -1081,6 +1103,7 @@ async function ingest(raw, segs){
    对方若继续补充，会按 streamGapMs 间隔再次抢跑，用更新更完整的上下文重出（旧队列被替换）。 */
 function maybeStreamPregenerate(){
   if(!cfg.streamMode || cfg.mode!=="auto") return;
+  if(!aiOnStage) return;                          // 我方二辩不在场 → 不抢跑
   if(genBusy || playing) return;
   if(!streamOppTalking()) return;                 // 只在对方正在说时抢跑
   // ★实时通道开启时，其增量文本也计入字数（往往比分片识别早到数秒 → 抢跑更早启动）
@@ -1242,6 +1265,7 @@ function scheduleSpeakCheck(){
 }
 async function runSpeakCheck(){
   if(cfg.mode!=="auto") return;
+  if(!aiOnStage) return;              // 我方二辩不在场（立论/质询/结辩/人人对辩）→ 不接话
   // 正在播报：没法再开口，稍后复查
   if(playing){ clearTimeout(speakTimer); speakTimer=setTimeout(runSpeakCheck, 800); return; }
   const last = transcript[transcript.length-1];
@@ -1672,6 +1696,7 @@ function stopMic(){
   rtAsrStop();                                         // 关闭实时通道（备用）
   preHold=false; lastStreamAt=0; streamAtOppChars=0;   // 清理流式抢跑状态
   floorWho=""; floorSrc="";                            // 重新倾听时发言人状态归零
+  curTarget=null; curStageName=""; aiOnStage=true;      // 环节信息复位（未连大屏时不限制 AI 开口）
   try{ clearTimeout(speakTimer); }catch(e){}
   try{ if(procNode){procNode.disconnect(); procNode.onaudioprocess=null;} }catch(e){}
   try{ if(hpNode) hpNode.disconnect(); }catch(e){}
@@ -2492,6 +2517,9 @@ function buzzStart(){
         curStage = (typeof ev.stage === "number") ? ev.stage : curStage;
         curKind  = ev.kind || "";
         curStageSide = ev.side || "";
+        curTarget = ev.target || null;
+        curStageName = ev.name || "";
+        recomputeAiOnStage();
         /* ★环节切换的间隙必然是主席串场 → floor 默认主席，等「计时开始/按钮/抢话」再落到具体一方 */
         setFloor("hall", "stage");
         if(freeMode && !was && st()) st().textContent = "自由辩论：等待抢话（有稿才抢）";
