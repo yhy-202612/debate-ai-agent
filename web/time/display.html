@@ -97,6 +97,9 @@
   .modal h3{margin:0 0 12px;font-size:22px}
   .modal p,.modal li{color:#b9c7e4;font-size:15px;line-height:1.75}
   .modal kbd{background:#1b2740;border:1px solid #2b3d61;border-radius:5px;padding:1px 7px;font-size:13px}
+  /* 一键隐藏所有键位提示（比赛投屏时用） */
+  body.hidekeys .kbd{display:none}
+  body.hidekeys .keyonly{display:none}
 </style>
 </head>
 <body>
@@ -127,12 +130,13 @@
 </main>
 
 <footer>
-  <button class="primary" id="btnStart">开始 / 暂停（空格）</button>
-  <button id="btnNext">下一环节（→）</button>
-  <button id="btnPrev">上一环节（←）</button>
-  <button id="btnReset">重置本环节（R）</button>
+  <button class="primary" id="btnStart">开始 / 暂停<span class="kbd">（空格）</span></button>
+  <button id="btnNext">下一环节<span class="kbd">（→）</span></button>
+  <button id="btnPrev">上一环节<span class="kbd">（←）</span></button>
+  <button id="btnReset">重置本环节<span class="kbd">（R）</span></button>
   <button id="btnSerial">连接开发板</button>
-  <button id="btnHelp">说明（H）</button>
+  <button id="btnHelp">说明<span class="kbd">（H）</span></button>
+  <button id="btnKeys" title="隐藏/显示键位提示（快捷键 K）">键位提示：开</button>
   <div class="spacer"></div>
   <div class="prog" id="prog"></div>
   <div class="stat"><span class="dot" id="dotSerial"></span><span id="serialState">开发板未连接</span></div>
@@ -149,10 +153,12 @@
 
 /* ---------- 赛制（依据 2026-10-16 筹备会纪要定稿） ---------- */
 const RULES = [
+  /* ★赛制：每方的质询紧跟在**该方一辩立论之后**（对方三辩质询一辩）
+     正方一辩立论 → 反方三辩质询正方一辩 → 反方一辩立论 → 正方三辩质询反方一辩 */
   { name:"正方一辩 · 立论",            side:"pro", seat:1, sec:180, kind:"forced" },
+  { name:"质询 · 反方三辩 → 正方一辩",  side:"con", seat:3, sec:90,  kind:"quiz", target:{side:"pro",seat:1} },
   { name:"反方一辩 · 立论",            side:"con", seat:1, sec:180, kind:"forced" },
   { name:"质询 · 正方三辩 → 反方一辩",  side:"pro", seat:3, sec:90,  kind:"quiz", target:{side:"con",seat:1} },
-  { name:"质询 · 反方三辩 → 正方一辩",  side:"con", seat:3, sec:90,  kind:"quiz", target:{side:"pro",seat:1} },
   { name:"人人对辩 · 一辩对一辩",       side:"both", seat:0, sec:150, kind:"duel" },
   { name:"人机对辩 ① · 正方一辩 vs 反方二辩(AI)", side:"pro", seat:1, sec:180, kind:"cross", target:{side:"con",seat:2} },
   { name:"人机对辩 ② · 反方一辩 vs 正方二辩(AI)", side:"con", seat:1, sec:180, kind:"cross", target:{side:"pro",seat:2} },
@@ -162,6 +168,14 @@ const RULES = [
 ];
 
 const SEAT_NAME = { 1:"一辩", 2:"二辩（AI）", 3:"三辩" };
+/* 键位提示开关（比赛投屏时可隐藏，偏好记在本地） */
+let hideKeys = false;
+function applyHideKeys(){
+  document.body.classList.toggle("hidekeys", hideKeys);
+  const b = $("btnKeys");
+  if(b) b.textContent = hideKeys ? "键位提示：关" : "键位提示：开";
+  try{ localStorage.setItem("debate_hide_keys", hideKeys ? "1" : "0"); }catch(e){}
+}
 const WARN_SEC = 10;      // 最后多少秒开始闪烁
 const BEEP_AT  = [30, 10, 0];   // 在这些秒数触发提示音
 
@@ -372,7 +386,7 @@ function applyStage(){
     hintEl.textContent = "交叉对辩 · 人与对方 AI 直接交锋";
   }else{
     setSpeaker(st.side, st.seat);
-    hintEl.textContent = "按 空格 开始计时";
+    hintEl.textContent = hideKeys ? "等待开始" : "按 空格 开始计时";
   }
   render();
   /* 让智能体知道：①当前环节类型（是否自由辩论）②本环节默认发言方 ③过渡期默认主席 */
@@ -562,6 +576,15 @@ $("btnPrev").onclick  = ()=> prevStage();
 $("btnReset").onclick = ()=> resetStage();
 $("btnSerial").onclick= ()=> connectSerial();
 $("btnHelp").onclick  = ()=> showHelp();
+$("btnKeys").onclick  = ()=>{ hideKeys = !hideKeys; applyHideKeys(); syncHints(); };
+/* 键位提示开关：读回上次偏好 */
+try{ hideKeys = localStorage.getItem("debate_hide_keys") === "1"; }catch(e){}
+applyHideKeys();
+/* 中央提示里的键位引导：关闭键位提示时不再显示「按空格」 */
+function syncHints(){
+  if(!hideKeys) return;
+  if(hintEl && /按 空格/.test(hintEl.textContent)) hintEl.textContent = "等待开始";
+}
 
 document.addEventListener("keydown", e=>{
   if(e.target.tagName === "INPUT") return;
@@ -572,6 +595,7 @@ document.addEventListener("keydown", e=>{
   else if(k === "r" || k === "R"){ resetStage(); }
   else if(k === "h" || k === "H"){ showHelp(); }
   else if(k === "f" || k === "F"){ toggleFullscreen(); }
+  else if(k === "k" || k === "K"){ hideKeys = !hideKeys; applyHideKeys(); syncHints(); }
   else if(KEY_MAP[k]){ onButton(KEY_MAP[k]); }
 });
 function toggleFullscreen(){
@@ -584,7 +608,9 @@ function showHelp(){
   $("modalBox").innerHTML = `
     <h3>使用说明</h3>
     <p><b>空格</b> 开始/暂停计时　<b>→ / Enter</b> 下一环节　<b>←</b> 上一环节　
-       <b>R</b> 重置本环节　<b>F</b> 全屏　<b>H</b> 本说明</p>
+       <b>R</b> 重置本环节　<b>F</b> 全屏　<b>H</b> 本说明　<b>K</b> 隐藏/显示键位提示</p>
+    <p style="color:var(--muted)">比赛投屏前建议按 <b>K</b> 关掉键位提示（按钮上的快捷键括号与「按空格」引导都会隐藏），
+       底部再按一次即可恢复。</p>
     <p><b>按钮（开发板）</b>：每块 ESP32 接 2 个按钮，板号 A=正方侧、B=反方侧。
        串口协议：<kbd>A1:D</kbd> 按下 / <kbd>A1:U</kbd> 松开，115200 波特率；
        电脑回发 <kbd>A:BUZZ</kbd> 让蜂鸣器响。</p>
