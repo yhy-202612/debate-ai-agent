@@ -1427,6 +1427,18 @@ async function runSpeakCheck(){
     const ocNow = oppChars();
     if(ocNow <= streamAtOppChars + 40){                 // 续说不多 → 稿子仍有效，立即放
       if(Date.now()-lastSpeakAt < 1200){ clearTimeout(speakTimer); speakTimer=setTimeout(runSpeakCheck, 500); return; }
+      /* ★人机对辩（cross）：抢跑已启动但级联一个字都还没吐出来 → 不干等十几秒，
+         立刻作废级联、改走端到端（首音约 1.3 秒）。这是「若流式模型未生成抢跑稿则调用端到端」的落地。 */
+      if(curKind === "cross" && !queue.length && !lastSentences.length && !preAudioBuf.length){
+        preHold = false;
+        try{ if(abortCtrl) abortCtrl.abort(); }catch(e){}
+        genBusy = false;                       // 级联的 finally 还会复位一次，无害
+        queue.length = 0; lastSentences = []; resetSpokenChars();
+        lastSpeakAt = Date.now();
+        const stX = $("speakState"); if(stX) stX.textContent = "抢跑稿未出 → 改走端到端出稿";
+        genRebutOmni(true);
+        return;
+      }
       lastSpeakAt = Date.now(); preHold = false;
       const st0=$("speakState"); if(st0) st0.textContent="流式抢跑：立即接话";
       // ★ Omni 抢跑：把对方说话期间已缓存的音频一次性排入播放（之后新到的块会自动直接播）
