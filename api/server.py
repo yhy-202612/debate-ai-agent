@@ -18,6 +18,9 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from debate import asr as asr_mod
+from debate import chat as chat_mod
+from debate import chatstore
+from debate import materials as materials_mod
 from debate import conductor
 from debate import factcheck as factcheck_mod
 from debate import metrics as metrics_mod
@@ -79,22 +82,24 @@ def _validate(payload: dict) -> dict:
     our_case = str(payload.get("our_case") or "").strip()
     topic = str(payload.get("topic") or "人工智能的发展对人的作用与意义是积极还是消极").strip()
     try:
-        duration = int(payload.get("duration") or 45)
+        duration = int(payload.get("duration") or 15)
     except (TypeError, ValueError):
-        duration = 45
+        duration = 15
     if not opponent or not our_side or not our_case:
         raise HTTPException(status_code=400, detail="对方立论、我方立场、我方立论均不能为空")
-    if not 30 <= duration <= 60:
-        raise HTTPException(status_code=400, detail="目标时长须在 30-60 秒之间")
+    if not 10 <= duration <= 30:
+        raise HTTPException(status_code=400, detail="目标时长须在 10-30 秒之间（赛制要求单轮 10-20 秒）")
     if len(opponent) > 12000 or len(our_case) > 6000:
         raise HTTPException(status_code=400, detail="输入过长，请先裁剪")
+    # ★ 本场我方立场（拓展/消解）：与队别解耦，传入即优先，不传由队别兜底
+    stance = str(payload.get("stance") or "").strip()[:40]
     # 使用方自定义提示词（反方训练版等用它调教风格；限长防滥用）
     extra = str(payload.get("system_extra") or "").strip()[:3000]
     # 纯净模式（训练版默认）：不注入辩论技法与考察口径，只保留 TTS 对接所需的格式约束
     no_strategy = bool(payload.get("no_strategy"))
     # ── 分段 / 续写（边播边生成）──
     chunk_sec = int(payload.get("chunk_sec") or 0)
-    chunk_sec = max(0, min(int(duration) or 45, chunk_sec))
+    chunk_sec = max(0, min(int(duration) or 15, chunk_sec))
     raw_cont = payload.get("continuation")
     continuation = None
     if isinstance(raw_cont, dict):
@@ -102,12 +107,15 @@ def _validate(payload: dict) -> dict:
             "part": max(2, min(9, int(raw_cont.get("part") or 2))),
             "said": str(raw_cont.get("said") or "").strip()[:1500],
             "fresh": str(raw_cont.get("fresh") or "").strip()[:1500],
-            "remain_sec": max(6, min(int(duration) or 45, int(raw_cont.get("remain_sec") or 20))),
+            "remain_sec": max(6, min(int(duration) or 15, int(raw_cont.get("remain_sec") or 20))),
         }
+    # ★ 队内资料：默认开启（正方训练版 / 对话模式）；反方训练版显式传 false
+    with_materials = payload.get("materials") is not False
     return {"opponent": opponent, "our_side": our_side, "our_case": our_case,
             "topic": topic, "duration": duration, "system_extra": extra,
+            "stance": stance,
             "no_strategy": no_strategy, "chunk_sec": chunk_sec,
-            "continuation": continuation}
+            "continuation": continuation, "materials": with_materials}
 
 
 @app.get("/healthz")
@@ -209,6 +217,173 @@ async def rebut_omni(request: Request):
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(gen(), media_type="text/event-stream", headers=SSE_HEADERS)
+
+
+# ---------------- 对话模式（正方版）----------------
+
+@app.post("/api/chat")
+async def chat(request: Request):
+    """对话模式：一次问答。
+
+    body: {messages:[{role,content}], topic, notes[], prefs[], topics[],
+           mode:"omni"|"cascade", model, voice, system_extra}
+    端到端 → 字幕 + PCM 音频；级联 → 仅字幕（前端再调 /api/tts-stream 播报）
+    """
+    _auth(request)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="请求体不是合法 JSON")
+    messages = chat_mod.norm_messages(body.get("messages"))
+    if not messages:
+        raise HTTPException(status_code=400, detail="messages 不能为空")
+    topic = str(body.get("topic") or "")[:200]
+    notes = body.get("notes") or []
+    prefs = body.get("prefs") or []
+    topics = body.get("topics") or []
+    extra = str(body.get("system_extra") or "")[:3000]
+    voice = str(body.get("voice") or "").strip()
+    model = str(body.get("model") or "").strip()
+    mode = str(body.get("mode") or "").strip().lower()
+    with_materials = body.get("materials") is not False   # 对话模式默认启用队内资料
+    if mode not in ("omni", "cascade"):
+        mode = "omni" if dashscope_key() else "cascade"
+    # ★上下文来源（前端勾选）
+    unsum = chat_mod.norm_messages(body.get("unsummarized"), limit=24)
+    use_full = bool(body.get("use_full"))
+    use_memory = body.get("use_memory") is not False
+    use_distill = bool(body.get("use_distill"))
+    distill = str(body.get("distill") or "")[:6000]
+
+    async def gen():
+        yield ": connected\n\n"
+        if mode == "omni":
+            agen = chat_mod.chat_stream_omni(
+                messages=messages, topic=topic, notes=notes, prefs=prefs, topics=topics,
+                voice=voice, model=model, extra=extra,
+                unsummarized=unsum, use_full=use_full, use_memory=use_memory,
+                use_distill=use_distill, distill=distill,
+                with_materials=with_materials)
+        else:
+            client = engine.client_for(model or "glm-5.3", "rebut")
+            agen = chat_mod.chat_stream_cascade(
+                client=client, messages=messages, topic=topic, notes=notes,
+                prefs=prefs, topics=topics, extra=extra,
+                unsummarized=unsum, use_full=use_full, use_memory=use_memory,
+                use_distill=use_distill, distill=distill,
+                with_materials=with_materials)
+        async for event in agen:
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(gen(), media_type="text/event-stream", headers=SSE_HEADERS)
+
+
+@app.post("/api/chat-summary")
+async def chat_summary(request: Request):
+    """把一段讨论整理成「资料 notes / 偏好 prefs / 话题 topics」。"""
+    _auth(request)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="请求体不是合法 JSON")
+    messages = chat_mod.norm_messages(body.get("messages"), limit=40)
+    if not messages:
+        raise HTTPException(status_code=400, detail="messages 不能为空")
+    prev = body.get("prev") or {}
+    model = str(body.get("model") or "glm-5.3").strip()
+    client = engine.client_for(model, "summary")
+    try:
+        res = await chat_mod.summarize_discussion(client=client, messages=messages, prev=prev)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"总结失败：{type(exc).__name__}: {exc}"[:300])
+    return res
+
+
+# ---------------- 辩论队内资料库（赛前讨论/质询训练/教练复盘的提炼）----------------
+
+@app.get("/api/materials")
+async def materials_list_api():
+    """资料库清单 + 当前注入字数（brief 为真正注入提示词的那一份）。"""
+    return {"enabled": materials_mod.enabled(),
+            "brief_name": materials_mod.BRIEF_NAME,
+            "brief_chars": len(materials_mod.brief()),
+            "items": materials_mod.list_materials()}
+
+
+@app.get("/api/materials/{name}")
+async def materials_get_api(name: str):
+    txt = materials_mod.read_material(name, 60000)
+    if not txt:
+        raise HTTPException(status_code=404, detail="资料不存在")
+    return {"name": name, "chars": len(txt), "text": txt}
+
+
+@app.post("/api/materials")
+async def materials_save_api(request: Request):
+    """新增/覆盖一份资料（name 以 .md 结尾，自动补）。"""
+    _auth(request)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="请求体不是合法 JSON")
+    name = str(body.get("name") or "").strip()
+    text = str(body.get("text") or "")
+    if not name:
+        raise HTTPException(status_code=400, detail="name 不能为空")
+    return {"ok": True, **materials_mod.save_material(name, text)}
+
+
+@app.delete("/api/materials/{name}")
+async def materials_delete_api(name: str, request: Request):
+    _auth(request)
+    return {"ok": materials_mod.delete_material(name)}
+
+
+# ---------------- 对话数据云端存储（落盘 /data/chat，容器重建不丢）----------------
+
+@app.post("/api/chat-store/save")
+async def chat_store_save(request: Request):
+    """部分更新：messages / memory / distill 三者只需传要改的那个。"""
+    _auth(request)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="请求体不是合法 JSON")
+    sid = str(body.get("sid") or "").strip()
+    try:
+        data = chatstore.save(sid, body)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "sid": sid, "updatedAt": data.get("updatedAt"),
+            "messages": len(data.get("messages") or []),
+            "notes": len((data.get("memory") or {}).get("notes") or [])}
+
+
+@app.get("/api/chat-store/get")
+async def chat_store_get(sid: str = ""):
+    try:
+        return chatstore.load(sid)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/chat-store/list")
+async def chat_store_list(limit: int = 50):
+    return {"sessions": chatstore.list_sessions(limit)}
+
+
+@app.post("/api/chat-store/delete")
+async def chat_store_delete(request: Request):
+    _auth(request)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="请求体不是合法 JSON")
+    sid = str(body.get("sid") or "")
+    try:
+        return {"ok": chatstore.delete(sid), "sid": sid}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/quick")
@@ -730,9 +905,17 @@ async def buzzer_publish(request: Request):
         "action": str(body.get("action") or "down"),
         "source": str(body.get("source") or "button"),
     }
-    for k in ("seat", "note", "kind", "stage", "reason", "board"):
+    for k in ("seat", "note", "kind", "reason", "board", "name", "floor"):
         if body.get(k) is not None:
             ev[k] = str(body[k])[:120]
+    # ★ stage 必须保持数字：前端用 typeof === "number" 判断环节号，字符串化会让它永久停在 -1
+    #   （症状：任何环节都被判定「可以发言」，人机对辩以外的环节也可能插话）
+    if isinstance(body.get("stage"), (int, float)) and not isinstance(body.get("stage"), bool):
+        ev["stage"] = int(body["stage"])
+    # ★ target 是人机对辩「轮到哪一方上场」的唯一判据，丢了会让 AI 在别人被提问时插话
+    if isinstance(body.get("target"), dict):
+        ev["target"] = {k: body["target"].get(k) for k in ("side", "seat")
+                        if body["target"].get(k) is not None}
     ev["ts"] = time.time()
     global _buzz_seq
     _buzz_seq += 1

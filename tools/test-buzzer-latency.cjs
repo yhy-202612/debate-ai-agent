@@ -88,7 +88,7 @@ const R = []; const ok = (n, c, e = "") => { R.push(!!c); console.log((c ? "✓"
 
 function reset(side = "正方") {
   win.eval(`
-    cfg.mode="auto"; cfg.streamMode=true; cfg.diarize=false; cfg.omni=false; cfg.side="${side}";
+    cfg.mode="auto"; cfg.streamMode=true; cfg.diarize=false; cfg.attr=true; cfg.floorMode=false; cfg.omni=false; cfg.side="${side}";
     cfg.streamMinChars=20; cfg.streamGapMs=7000; cfg.streamTts=true; cfg.speakCooldown=0;
     transcript=[]; queue.length=0; lastSentences=[]; preHold=false; genBusy=false; playing=false;
     lastSpeakAt=0; lastStreamAt=0; streamAtOppChars=0; lastPlayEndAt=0; stopped=false; speakGen=0;

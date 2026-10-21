@@ -24,7 +24,7 @@ import re
 import time
 from typing import Any, AsyncIterator
 
-from . import cost, factcheck, knowledge, metrics, prompts
+from . import cost, factcheck, knowledge, materials, metrics, prompts
 from .config import (CHOOSABLE_MODELS, choice_route, factcheck_enabled, load_routes,
                      max_tokens, mode, parallel_width)
 from .models import ChatClient, ModelError
@@ -159,21 +159,32 @@ def build_analysis(obj: Any) -> tuple[dict, list]:
     return structured, plan
 
 
-def side_note(side: str, topic: str = "") -> str:
-    """把“正方/反方”显式化，避免模型误解我方立场。
+def side_note(side: str, topic: str = "", stance: str = "") -> str:
+    """把「我方立场」显式化，避免模型误解。
 
-    ★「A 还是 B」型辩题必须按赛制实际分配点名立场：
-    本场辩题「消解还是拓展」，正方＝拓展、反方＝消解。
-    若只写「支持辩题所陈述的观点」，模型会把正方理解成辩题字面先提的「消解」，
-    与我方立场完全相反。
+    ★「A 还是 B」型辩题必须按赛制实际分配点名立场。2026-10-20 队内定稿：
+      **反方 = 拓展方，正方 = 消解方**（此前相反，已按公布的赛制更正）。
+      stance 显式传入时以 stance 为准，队别只作兜底。
     """
     s = (side or "").strip()
     t = topic or ""
-    if "消解" in t and "拓展" in t:
-        if s == "正方":
-            return "正方（主张【人工智能的发展会拓展人的价值】，即「拓展」一方；对方主张「消解」）"
-        if s == "反方":
-            return "反方（主张【人工智能的发展会消解人的价值】，即「消解」一方；对方主张「拓展」）"
+    st = (stance or "").strip()
+    if not st:
+        if "消解" in s or "侵蚀" in s:
+            st = "消解"
+        elif "拓展" in s:
+            st = "拓展"
+        elif "正方" in s:
+            st = "消解"
+        elif "反方" in s:
+            st = "拓展"
+    dissolve = prompts.is_dissolve(st) if st else False
+    if "消解" in t and "拓展" in t and st:
+        ours = "消解" if dissolve else "拓展"
+        other = "拓展" if dissolve else "消解"
+        label = s or ("正方" if dissolve else "反方")
+        return (f"{label}（我方立场={ours}；主张【人工智能的发展会{ours}人的价值】，"
+                f"对方主张「{other}」）")
     if s == "正方":
         return "正方（支持辩题所陈述的观点）"
     if s == "反方":
@@ -211,15 +222,24 @@ def _no_repeat_note(text: str) -> str:
             "把更多篇幅留给拆解对方的前提与追问。")
 
 
-def _aug(prompt: str, memory: str = "") -> str:
+def _aug(prompt: str, memory: str = "", our_side: str = "", with_materials: bool = True,
+         stance: str = "") -> str:
     """在提示词后追加「本场长期记忆」与辩论知识库（DEBATE_KB=off 时不追加）。"""
     parts = [prompt]
     mem = (memory or "").strip()
     if mem:
-        parts.append("【本场长期记忆（本场此前已说过的内容，供你避免重复、保持连贯）】\n" + mem)
+        parts.append(
+            "【本场长期记忆（本场此前已说过的内容）】\n"
+            "★硬规则：「我方已用论据」里出现过的例子、数据、类比、金句，本场**绝不再原样重复**；"
+            "确需呼应时只能用一句话「接着往前推」，换角度切入，不得把例子重新讲一遍。\n" + mem)
     kb = knowledge.knowledge_block()
     if kb:
         parts.append(kb)
+    # ★ 辩论队内资料（赛前讨论/质询训练/教练复盘提炼出的共识与红线），
+    #   放在最后 = 权重最高：立场一致性与「包论」等红线优先于通用框架。
+    mt = materials.materials_block(stance or our_side, allow=with_materials)
+    if mt:
+        parts.append(mt)
     return "\n\n".join(parts)
 
 
@@ -242,6 +262,15 @@ SUMMARY_PROMPT = (
     "【已有摘要】：\n{prev}\n【新增转写】：\n{recent}"
 )
 
+
+
+def _len_note(duration: int) -> str:
+    """★字数硬约束：放在最终提示词**最末尾**（权重最高）。
+    队内资料注入在末尾，模型容易被长材料带着写长，这里必须再钉一次。"""
+    lo, hi = int(duration * 4.5), int(duration * 5.5)
+    return (f"\n\n【字数硬约束 · 最高优先级，覆盖上面所有关于篇幅的说法】\n"
+            f"本次发言只允许 {lo}-{hi} 字（约 {int(duration)} 秒口播）。"
+            f"超过 {hi} 字直接判不合格，宁少不多。说到最后一句立刻停，不要补充、不要总结、不要凑时长。")
 
 def _norm_point(s) -> str:
     """归一化：去掉标点/空白与常见虚词，便于模糊去重。"""
@@ -353,8 +382,10 @@ class Engine:
 
     async def rebut_stream(self, **kw) -> AsyncIterator[dict]:
         model_id = str(kw.pop("model", "") or "").strip()
+        # ★ 本场我方立场（拓展/消解）：与队别解耦，2026-10-20 定稿「反方=拓展、正方=消解」
+        stance = str(kw.pop("stance", "") or "").strip()
         if "our_side" in kw:
-            kw["our_side"] = side_note(kw.get("our_side"), kw.get("topic") or "")
+            kw["our_side"] = side_note(kw.get("our_side"), kw.get("topic") or "", stance)
         # 使用方自定义提示词（反方训练版等）：追加到提示词尾部，位置最靠后、权重最高
         extra = str(kw.pop("system_extra", "") or "").strip()
         if extra:
@@ -362,6 +393,8 @@ class Engine:
             kw["memory"] = (base_mem + "\n\n" if base_mem else "") + \
                 "【使用方自定义提示词（务必遵循；与上面的默认风格或技法冲突时，以本段为准）】\n" + extra
         no_strategy = bool(kw.pop("no_strategy", False))
+        # ★ 队内资料只供正方训练版与对话模式使用；反方版显式关掉
+        with_materials = kw.pop("materials", True) is not False
         continuation = kw.pop("continuation", None) or None
         chunk_sec = int(kw.pop("chunk_sec", 0) or 0)
         strong = self.client_for(model_id, "rebut")
@@ -376,6 +409,8 @@ class Engine:
         last_done: dict | None = None
         async for event in runner(usage=usage, strong_client=strong,
                                   no_strategy=no_strategy,
+                                  with_materials=with_materials,
+                                  stance=stance,
                                   continuation=continuation, chunk_sec=chunk_sec, **kw):
             if event.get("type") == "done":
                 last_done = event      # 暂存，待事实核查后再下发
@@ -554,13 +589,15 @@ class Engine:
                               topic: str, duration: int, usage: cost.UsageAcc | None = None,
                               strong_client: ChatClient | None = None, memory: str = "",
                               no_strategy: bool = False,
+                              with_materials: bool = True,
+                              stance: str = "",
                               continuation: dict | None = None,
                               chunk_sec: int = 0
                               ) -> AsyncIterator[dict]:
         t0 = time.monotonic()
         strong = strong_client or self.strong
         # 纯净模式（训练版）：不注入辩论技法／考察口径，只留 TTS 对接约束
-        sys_p = prompts.SYSTEM_CLEAN if no_strategy else prompts.SYSTEM
+        sys_p = prompts.SYSTEM_CLEAN if no_strategy else prompts.system_for(stance or our_side)
         tpl = prompts.ONE_SHOT_CLEAN if no_strategy else prompts.ONE_SHOT
         yield {"type": "stage", "stage": "draft", "status": "start"}
         # 分段 / 续写：本段只负责「剩余时长」那一段，字数按剩余时长折算
@@ -571,7 +608,7 @@ class Engine:
         lo, hi = eff_sec * 4.5, eff_sec * 5.5
         prompt = _aug(prompts.render(
             tpl, duration=eff_sec, lo=lo, hi=hi,
-            topic=topic, our_side=our_side, our_case=our_case, opponent=opponent), memory)
+            topic=topic, our_side=our_side, our_case=our_case, opponent=opponent), memory, our_side, with_materials, stance=stance) + _len_note(duration)
         prompt += _no_repeat_note(opponent)
         if not continuation and chunk_sec:
             prompt += prompts.CHUNK_NOTE.format(sec=eff_sec, lo=int(lo), hi=int(hi))
@@ -606,11 +643,13 @@ class Engine:
     async def _rebut_two_stage(self, *, opponent: str, our_side: str, our_case: str,
                                topic: str, duration: int, usage: cost.UsageAcc | None = None,
                                strong_client: ChatClient | None = None, memory: str = "",
-                               no_strategy: bool = False, continuation: dict | None = None,
+                               no_strategy: bool = False, with_materials: bool = True,
+                               stance: str = "",
+                               continuation: dict | None = None,
                                chunk_sec: int = 0
                                ) -> AsyncIterator[dict]:
         t0 = time.monotonic()
-        sys_p = prompts.SYSTEM_CLEAN if no_strategy else prompts.SYSTEM
+        sys_p = prompts.SYSTEM_CLEAN if no_strategy else prompts.system_for(stance or our_side)
         tpl = prompts.DRAFT_CLEAN if no_strategy else prompts.DRAFT
         width = parallel_width()
         strong = strong_client or self.strong
@@ -635,7 +674,7 @@ class Engine:
                 tpl, duration=duration, lo=duration * 4.5, hi=duration * 5.5,
                 topic=topic, our_side=our_side, our_case=our_case, opponent=opponent,
                 structured=json.dumps(structured, ensure_ascii=False),
-                plan=json.dumps(plan, ensure_ascii=False)), memory)
+                plan=json.dumps(plan, ensure_ascii=False)), memory, our_side, with_materials, stance=stance) + _len_note(duration)
 
             temps = [0.5, 0.85, 0.3, 1.0][:max(1, width)]
             aux_tasks = [asyncio.create_task(self._draft_once(draft_prompt, t, usage, strong))
@@ -699,7 +738,9 @@ class Engine:
     async def _rebut_spec(self, *, opponent: str, our_side: str, our_case: str,
                           topic: str, duration: int, usage: cost.UsageAcc | None = None,
                           strong_client: ChatClient | None = None, memory: str = "",
-                          no_strategy: bool = False, continuation: dict | None = None,
+                          no_strategy: bool = False, with_materials: bool = True,
+                          stance: str = "",
+                          continuation: dict | None = None,
                           chunk_sec: int = 0
                           ) -> AsyncIterator[dict]:
         """快/强（+备用）多路并行出稿，先产出首句者独得全稿；其余路继续跑以备兜底。
@@ -710,11 +751,11 @@ class Engine:
         t0 = time.monotonic()
         strong = strong_client or self.strong
         yield {"type": "stage", "stage": "draft", "status": "start"}
-        sys_p = prompts.SYSTEM_CLEAN if no_strategy else prompts.SYSTEM
+        sys_p = prompts.SYSTEM_CLEAN if no_strategy else prompts.system_for(stance or our_side)
         tpl = prompts.ONE_SHOT_CLEAN if no_strategy else prompts.ONE_SHOT
         prompt = _aug(prompts.render(
             tpl, duration=duration, lo=duration * 4.5, hi=duration * 5.5,
-            topic=topic, our_side=our_side, our_case=our_case, opponent=opponent), memory)
+            topic=topic, our_side=our_side, our_case=our_case, opponent=opponent), memory, our_side, with_materials, stance=stance) + _len_note(duration)
 
         # 仅快/强两路竞速；备用模型不参与（避免 3× 成本），仅在两路都失败时兜底
         lanes = [("strong", strong), ("fast", self.fast)]

@@ -20,7 +20,7 @@ import json
 import time
 from typing import AsyncIterator
 
-from . import knowledge, prompts
+from . import knowledge, materials, prompts
 from .config import dashscope_key
 
 RT_URL = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
@@ -52,21 +52,25 @@ def _header_kwarg() -> str:
     return "additional_headers" if major >= 14 else "extra_headers"
 
 
-def build_instructions(*, our_side: str, our_case: str, duration: int = 45,
+def build_instructions(*, our_side: str, our_case: str, duration: int = 15,
                        memory: str = "", extra: str = "",
                        no_strategy: bool = False,
+                       with_materials: bool = True,
+                       stance: str = "",
+                       topic: str = "",
                        continuation: dict | None = None) -> str:
     """把「人设 + 立场 + 时长约束 + 长期记忆」拼成 Omni 的 system。
 
     no_strategy=True 为训练版纯净模式：用 prompts.SYSTEM_CLEAN，
     不含辩论技法库与考察口径，只保留 TTS 对接所需的格式约束。
     """
-    lo = max(120, int(duration * 4.5))
-    hi = max(lo + 40, int(duration * 5.5))
+    lo = max(40, int(duration * 4.5))
+    hi = max(lo + 30, int(duration * 5.5))
+    from .engine import side_note
     parts = [
-        prompts.SYSTEM_CLEAN if no_strategy else prompts.SYSTEM,
+        prompts.SYSTEM_CLEAN if no_strategy else prompts.system_for(stance or our_side),
         "",
-        f"【我方立场】{our_side}",
+        f"【我方立场】{side_note(our_side, topic, stance)}",
         f"【我方立论】{our_case}",
         "",
         "【本次发言的硬约束】",
@@ -91,13 +95,21 @@ def build_instructions(*, our_side: str, our_case: str, duration: int = 45,
     kb = knowledge.knowledge_block()
     if kb:
         parts += ["", kb]
+    mt = materials.materials_block(stance or our_side, allow=with_materials)          # 队内共识（权重最高）
+    if mt:
+        parts += ["", mt]
+    # ★与级联完全一致的字数硬约束：放在最末尾（权重最高），防止端到端写长导致现场超时
+    from .engine import _len_note
+    parts.append(_len_note(duration))
     return "\n".join(parts)
 
 
 async def rebut_stream_omni(*, opponent: str, our_side: str, our_case: str,
-                            topic: str = "", duration: int = 45, memory: str = "",
+                            topic: str = "", duration: int = 15, memory: str = "",
+                            stance: str = "",
                             voice: str = "", model: str = "",
                             system_extra: str = "", no_strategy: bool = False,
+                            materials: bool = True,       # 队内资料（反方训练版传 False）
                             continuation: dict | None = None,
                             chunk_sec: int = 0) -> AsyncIterator[dict]:
     """文本入 → 文本 + PCM 音频流式出。异常统一转成 error 事件，不向上抛。"""
@@ -120,7 +132,11 @@ async def rebut_stream_omni(*, opponent: str, our_side: str, our_case: str,
         duration = max(6, min(int(duration), int(chunk_sec)))
     instructions = build_instructions(our_side=our_side, our_case=our_case,
                                       duration=duration, memory=memory, extra=system_extra,
-                                      no_strategy=no_strategy, continuation=continuation)
+                                      no_strategy=no_strategy,
+                                      with_materials=materials,
+                                      stance=stance,
+                                      topic=topic,
+                                      continuation=continuation)
     # ★与队友去重：我方一辩/三辩已用过的例子，二辩不再重复
     try:
         from .engine import _no_repeat_note

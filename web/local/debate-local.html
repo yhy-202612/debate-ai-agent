@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>辩论 AI 二辩 · 本地版（全程倾听）</title>
+<title>辩论 AI 二辩 · 反方训练版（拓展 · 我方）</title>
 <style>
   :root{
     --bg:#0b1220; --panel:#131c2e; --panel2:#1b2740;
@@ -80,11 +80,13 @@
 </head>
 <body>
 <header>
-  <h1>辩论 AI 二辩 · 本地版</h1>
+  <h1>辩论 AI 二辩 · 反方训练版（拓展 · 我方）</h1>
   <span class="tag">全程倾听</span>
   <span class="tag">常态化·重叠分片</span>
   <span class="tag">录音上传服务器</span>
   <span class="tag" id="secTag">检测环境…</span>
+  <span class="tag" id="matTag" title="队内共识已注入出稿提示词">📚 队内资料 …</span>
+  <a href="/debate/local/chat.html" class="tag" style="text-decoration:none;color:#6ea8ff;border-color:#2f6fed">💬 对话模式</a>
   <div class="sp">
     <select id="modeSel" class="hdr-sel" title="运行模式">
       <option value="test">测试模式</option>
@@ -222,7 +224,7 @@
             <option value="__custom">自定义…</option>
           </select>
         </div>
-        <div><label>目标时长（秒）</label><input id="cfgDuration" type="number" min="30" max="60" value="45"></div>
+        <div><label>目标时长（秒）</label><input id="cfgDuration" type="number" min="10" max="30" value="15"><span class="mini"> 赛制：单轮 10~20 秒，一般 15 秒</span></div>
       </div>
       <label>模型选择（三路独立，可按用途分别指定）</label>
       <div><label class="mini">① 出稿模型（生成驳论正文 · 质量优先）</label>
@@ -260,6 +262,17 @@
           <div class="sw" style="align-self:end;margin-top:16px"><input type="checkbox" id="cfgAsrFix"> 自动修正识别文本</div>
           <div class="sw" style="align-self:end;margin-top:16px"><input type="checkbox" id="cfgHpf" checked> 录音降噪增强（高通去低频+增益）</div>
           <div class="sw" style="align-self:end;margin-top:16px"><input type="checkbox" id="cfgStreamTts" checked> 流式播报（边合成边播）</div>
+          <div class="sw" style="margin-top:8px"><input type="checkbox" id="cfgEmph" checked> <b>重要词慢速重读</b>：稿件里用 <code>【慢】关键词【/慢】</code> 标出的片段单独降速合成，播报时更像强调
+            <select id="cfgEmphRate" style="width:auto;margin-left:8px;padding:3px 6px">
+              <option value="-20%">慢 20%</option>
+              <option value="-30%" selected>慢 30%（推荐）</option>
+              <option value="-40%">慢 40%</option>
+              <option value="-50%">慢 50%（很慢）</option>
+            </select>
+            <label style="margin-left:14px;display:inline-flex;align-items:center;gap:6px">
+              <input type="checkbox" id="cfgEmphAuto" checked style="width:auto"> 让 AI 自动标注
+            </label>
+          </div>
           <div class="sw" style="align-self:end;margin-top:16px"><input type="checkbox" id="cfgDiarize"> 说话人分离自动归属（需把识别模型选为「说话人分离」）</div>
           <div class="sw" style="margin-top:8px"><input type="checkbox" id="cfgFloorMode" checked> <b>按赛制流程判定发言人（推荐）</b>：用大屏环节 + 实体按钮回传直接确定「现在谁在说」，不再让 AI 猜；环节切换间隙默认主席<span class="mini"></span></div>
           <div class="sw" style="margin-top:8px"><input type="checkbox" id="cfgAttr"> 用 AI 识别发言方（/api/attribute）· 关闭可省调用与延迟，仅在流程信息缺失时才有必要开启</div>
@@ -301,7 +314,19 @@
           <div class="mini">0.45 = 前 45% 时长先写好，其余在开口后结合对方新发言续写。调小 → 更快融入新内容；调大 → 首段更完整。</div>
         </div>
         <div class="sw" style="margin-top:8px"><input type="checkbox" id="cfgRtAsr"> 实时识别通道（备用可选）· 边听边出字 + 服务端判停<span id="rtAsrState" class="mini"></span></div>
+        <div style="margin-top:8px"><label>输出模式</label>
+          <select id="cfgOutMode">
+            <option value="hybrid">混合（推荐）· 先分段抢跑，抢跑稿未出时自动转端到端</option>
+            <option value="cascade">仅分段抢跑 · 级联出稿 + TTS 朗读（首句 5~18 秒）</option>
+            <option value="omni">仅端到端 · 一次请求直接出声音（首音约 1 秒）</option>
+          </select></div>
+        <div><label>我方立场（本场）</label>
+          <select id="cfgStance">
+            <option value="拓展">拓展（反方 · 我方）</option>
+            <option value="消解">消解（正方 · 对方）</option>
+          </select></div>
         <div class="sw" style="margin-top:8px"><input type="checkbox" id="cfgOmni" checked> <b>端到端出稿通道（推荐）· 首音约 1 秒，一次生成直接出声音</b>；关闭则走级联（首句需 5~18 秒）<span id="omniState" class="mini"></span></div>
+        <div class="sw" style="margin-top:6px"><input type="checkbox" id="cfgOmniTts" checked> <b>端到端也用同一个 TTS（推荐）</b>：抢跑与兜底同音色、同语气、同语速<span class="mini">（关掉则端到端直接用模型自带嗓音，首音更快但会换声）</span></div>
         <div class="grid2">
           <div><label>端到端音色</label><select id="cfgOmniVoice"></select></div>
           <div><label>端到端模型</label><select id="cfgOmniModel"></select></div>
@@ -385,20 +410,21 @@ const $ = id => document.getElementById(id);
 const SR = 16000;
 const DEFAULTS = {
   base:"http://120.48.43.211/debate", token:"",
-  voice:"alex", rate:"+8%", ttsModel:"", emotion:"",
+  voice:"longanlufeng", rate:"+8%", ttsModel:"qwen-audio-3.0-tts-plus", emotion:"严肃",
   topic:"人工智能的发展会消解还是拓展人的价值",
-  side:"正方", sideCustom:"", kase:"", duration:45,
+  side:"反方", sideCustom:"", kase:"", duration:15, outMode:"hybrid", stance:"拓展",
   listen:"interval", chunkMs:2500, overlapMs:800,
   asrModel:"Qwen/Qwen3-ASR-1.7B",
   autoGen:false, autoGenChars:60, autoSpeak:true, micId:"", asrFix:false,
-  streamMode:false, streamMinChars:20, streamGapMs:7000, rtAsr:false, freeClaimDelay:700,
+  streamMode:true, streamMinChars:20, streamGapMs:7000, rtAsr:false, freeClaimDelay:700,
   floorMode:true, attr:false, chunked:true, chunkRatio:0.45,
-  omni:true, omniVoice:"", omniModel:"",
+  omni:true, omniVoice:"Ethan", omniModel:"", omniTts:true,
   silence:700, minSeg:600, maxSeg:15000, vad:0.012, blockGapMs:8000,
   mode:"test", autoSave:true, session:"", speakGap:3500, speakCooldown:20000, audioHeal:false, model:"",
   rebutModel:"", judgeModel:"", summaryModel:"",
-  summaryEnabled:false, summaryEvery:12, summary:null,
-  streamTts:true, diarize:false, hpf:true
+  summaryEnabled:true, summaryEvery:10, summary:null,
+  streamTts:true, diarize:false, hpf:true,
+  emphSpeak:true, emphRate:"-30%", emphAuto:true
 };
 let cfg = Object.assign({}, DEFAULTS);
 try{ Object.assign(cfg, JSON.parse(localStorage.getItem("debate_local_cfg")||"{}")); }catch(e){}
@@ -408,6 +434,36 @@ if(!cfg.speakGap || cfg.speakGap < 3000) cfg.speakGap = 3500;
 if(Number(cfg.chunkMs)===3000) cfg.chunkMs = 2500;
 /* ★迁移（2026-10-17）：端到端通道（Omni）实测首音约 1 秒，而级联出稿首句需 5~18 秒。
    让所有老配置一次性切到 Omni（只迁移一次，之后用户可自行关闭）。 */
+// ★迁移（2026-10-20 赛制定稿）：AI 单轮发言 10~20 秒（一般 15 秒），旧配置 45 秒一律收回
+if(!(cfg.duration>=10 && cfg.duration<=30)) cfg.duration = 15;
+// ★迁移（2026-10-20）：输出模式改三态，老配置（仅 omni 布尔）统一切到「混合」
+if(!cfg.outMode) cfg.outMode = "hybrid";
+// ★迁移（2026-10-20）：立场与队别解耦（我方=拓展=反方）
+if(!cfg.stance) cfg.stance = "消解";
+// ★迁移（2026-10-20）：长期总结改为默认开启（防止重复已说过的例子）
+if(!localStorage.getItem("debate_summary_on_v3")){
+  cfg.summaryEnabled = true; if(!cfg.summaryEvery || cfg.summaryEvery > 12) cfg.summaryEvery = 10;
+  try{ localStorage.setItem("debate_summary_on_v3","1"); localStorage.setItem("debate_local_cfg", JSON.stringify(cfg)); }catch(e){}
+}
+// ★迁移（2026-10-20）：默认开启分段抢跑（抢跑稿未出时由端到端兜底）
+if(cfg.streamMode === false) cfg.streamMode = true;
+// ★迁移（2026-10-20）：正反方称谓重分配（正方=消解、反方=拓展）。本页固定为「反方·拓展」
+if(!localStorage.getItem("debate_side_v3_local")){
+  cfg.side = "反方"; cfg.stance = "拓展";
+  cfg.voice = "longanlufeng"; cfg.rate = "+8%"; cfg.omniVoice = "Ethan";
+  cfg.ttsModel = "qwen-audio-3.0-tts-plus"; if(!cfg.emotion) cfg.emotion = "严肃";
+  try{ localStorage.setItem("debate_side_v3_local","1"); localStorage.setItem("debate_local_cfg", JSON.stringify(cfg)); }catch(e){}
+}
+// ★迁移（2026-10-20）：TTS 默认切到「千问 audio 3.0（plus）+ 严肃」，按角色选男女声（正方=消解·女声）
+if(!localStorage.getItem("debate_tts_v2_migrated")){
+  const _oldModel = String(cfg.ttsModel||"");
+  if(!_oldModel || /CosyVoice2|MOSS/i.test(_oldModel)){
+    cfg.ttsModel = "qwen-audio-3.0-tts-plus"; cfg.voice = "longanlingxin"; cfg.rate = "+0%";
+    if(!cfg.omniVoice) cfg.omniVoice = "Serena";
+  }
+  if(!cfg.emotion) cfg.emotion = "严肃";
+  try{ localStorage.setItem("debate_tts_v2_migrated","1"); localStorage.setItem("debate_local_cfg", JSON.stringify(cfg)); }catch(e){}
+}
 if(!localStorage.getItem("debate_local_omni_on")){
   cfg.omni = true;
   try{ localStorage.setItem("debate_local_omni_on","1"); }catch(e){}
@@ -524,7 +580,10 @@ async function loadVoices(){
         const o=document.createElement("option"); o.value=m.id; o.textContent=m.name||m.id;
         if(m.note) o.title=m.note; msel.appendChild(o);
       });
-      if(d.default_model) msel.value = d.default_model;
+      // ★ 必须尊重已保存的选择：若先无条件设为服务端默认，下面的 applyModelVoices
+      //   会用默认模型的音色回填并把 cfg.ttsModel/cfg.voice 覆盖掉（现场会静默退回 CosyVoice2）
+      if(cfg.ttsModel && MODELS_MAP[cfg.ttsModel]) msel.value = cfg.ttsModel;
+      else if(d.default_model) msel.value = d.default_model;
     }
     // 语气（情感标签）下拉
     const esel = $("cfgEmotion");
@@ -563,6 +622,23 @@ async function loadVoices(){
     }
   }
 }
+
+async function loadMaterials(){
+  const el = $("matTag");
+  if(!el) return;
+  try{
+    const r = await fetch(api("/api/materials"));
+    const d = await r.json();
+    if(d.enabled && d.brief_chars > 0){
+      el.textContent = "📚 队内资料 " + d.brief_chars + " 字";
+      el.style.color = "#7ee2a8";
+      el.title = "已注入出稿提示词（赛前讨论/质询训练/教练复盘的提炼，共 " + (d.items||[]).length + " 份）";
+    }else{
+      el.textContent = "📚 队内资料 未加载";
+      el.style.color = "";
+    }
+  }catch(e){ el.textContent = "📚 队内资料 ?"; }
+}
 /* 按当前所选「播报模型」刷新音色下拉；keep 为想保留的音色（不适用则用该模型默认音色） */
 function applyModelVoices(keep){
   const msel = $("cfgTtsModel"), sel = $("cfgVoice");
@@ -581,7 +657,7 @@ function applyModelVoices(keep){
   if(esel){
     const sup = !!(m && m.supports_emotion);
     const opts = (m && m.emotions) || [];
-    const keepE = esel.value;
+    const keepE = esel.value || cfg.emotion || "";  // ★ 首次进入时下拉为空，须回退到已保存的 cfg.emotion（否则「严肃」被清空）
     esel.innerHTML = '<option value="">默认（自然语气）</option>' +
       opts.map(e=>`<option value="${e}">${e}</option>`).join("");
     esel.disabled = !sup;
@@ -716,7 +792,10 @@ function fillSettings(){
   if($("cfgChunkRatio")) $("cfgChunkRatio").value = (cfg.chunkRatio==null?0.45:cfg.chunkRatio);
   $("cfgStreamMode").checked=!!cfg.streamMode;
   if($("cfgRtAsr")) $("cfgRtAsr").checked=!!cfg.rtAsr;
+  if($("cfgOutMode")) $("cfgOutMode").value = cfg.outMode || "hybrid";
+  if($("cfgStance")) $("cfgStance").value = cfg.stance || "消解";
   if($("cfgOmni")) $("cfgOmni").checked=!!cfg.omni;
+  if($("cfgOmniTts")) $("cfgOmniTts").checked = cfg.omniTts !== false;
   if($("cfgOmniVoice")) $("cfgOmniVoice").value=cfg.omniVoice||"";
   if($("cfgOmniModel")) $("cfgOmniModel").value=cfg.omniModel||"";
   updateOmniState();
@@ -729,6 +808,9 @@ function fillSettings(){
   $("cfgAsrFix").checked=!!cfg.asrFix;
   $("cfgHpf").checked=cfg.hpf!==false;
   $("cfgStreamTts").checked=cfg.streamTts!==false;
+  $("cfgEmph").checked=cfg.emphSpeak!==false;
+  if($("cfgEmphAuto")) $("cfgEmphAuto").checked=cfg.emphAuto!==false;
+  $("cfgEmphRate").value=cfg.emphRate||"-30%";
   $("cfgDiarize").checked=!!cfg.diarize;
   loadMics();
 }
@@ -754,7 +836,7 @@ function saveSettings(){
   cfg.emotion = $("cfgEmotion") ? ($("cfgEmotion").value || "") : (cfg.emotion||"");
   cfg.topic = $("cfgTopic").value.trim();
   cfg.side = ($("cfgSide").value==="__custom") ? ($("cfgSideCustom").value.trim()||"正方") : $("cfgSide").value;
-  cfg.kase = $("cfgCase").value.trim(); cfg.duration = parseInt($("cfgDuration").value)||45;
+  cfg.kase = $("cfgCase").value.trim(); cfg.duration = (function(){const v=parseInt($("cfgDuration").value,10); return (v>=10&&v<=30)?v:15;})();
   cfg.listen = $("cfgListen").value || "interval";
   cfg.chunkMs = parseInt($("cfgChunkMs").value)||2500; cfg.overlapMs = parseInt($("cfgOverlapMs").value)||0;
   cfg.blockGapMs = parseInt($("cfgBlockGap").value)||8000;
@@ -779,6 +861,11 @@ function saveSettings(){
   }
   cfg.streamMode = $("cfgStreamMode").checked;
   cfg.rtAsr = $("cfgRtAsr") ? $("cfgRtAsr").checked : !!cfg.rtAsr;
+  cfg.outMode = $("cfgOutMode") ? ($("cfgOutMode").value||"hybrid") : (cfg.outMode||"hybrid");
+  cfg.stance = $("cfgStance") ? ($("cfgStance").value||"消解") : (cfg.stance||"消解");
+  cfg.omni = (cfg.outMode === "omni");
+  if($("cfgOmni")) $("cfgOmni").checked = cfg.omni;
+  if($("cfgOmniTts")) cfg.omniTts = $("cfgOmniTts").checked;
   cfg.omni = $("cfgOmni") ? $("cfgOmni").checked : !!cfg.omni;
   cfg.omniVoice = $("cfgOmniVoice") ? ($("cfgOmniVoice").value||"") : cfg.omniVoice;
   cfg.omniModel = $("cfgOmniModel") ? ($("cfgOmniModel").value||"") : cfg.omniModel;
@@ -793,6 +880,9 @@ function saveSettings(){
   cfg.asrFix = $("cfgAsrFix").checked;
   cfg.hpf = $("cfgHpf").checked;
   cfg.streamTts = $("cfgStreamTts").checked;
+  cfg.emphSpeak = $("cfgEmph").checked;
+  cfg.emphRate = $("cfgEmphRate").value || "-30%";
+  if($("cfgEmphAuto")) cfg.emphAuto = $("cfgEmphAuto").checked;
   cfg.diarize = $("cfgDiarize").checked;
   cfg.micId = $("cfgMic").value || "";
   if(cfg.mode==="auto" && cfg.autoSave!==true) cfg.autoSave = true;   // 全自动必开保存
@@ -1013,6 +1103,17 @@ function looksChair(t){
   if(/我方认为|我方坚持|我方主张|我们认为|对方辩友|贵方|你方观点|我方的/.test(x)) return false;
   return /^(感谢|谢谢主席|谢谢双方|下面|接下来|有请|本场|时间到|进入第|各位评委|双方辩手|现在有请|请双方)/.test(x);
 }
+/* ★人机对辩（cross）的发言人按「谁在场上」分两种情形处理：
+   ①我方 AI 上场（target 指向我方二辩）→ 麦克风里只可能有一位真人（对方一辩），
+     直接推定为 opp：省一次识别、零延迟，且不会因大屏 floor=主席 而整段判成会场。
+   ②对方 AI 上场（target 指向对方二辩）→ 声音有两路：我方一辩（真人）+ 对方 AI（扬声器），
+     不能一律推定，必须交给归属识别区分，否则会把我方一辩的话记成对方、污染长期记忆。
+   主席串场一律按 looksChair 排除，避免开场提示语被当成对方发言去抢。 */
+function crossForcedWho(t){
+  if(curKind !== "cross" || !curTarget) return "";      // 非人机对辩 / 未收到上场方信息 → 不强行推定
+  if(looksChair(t)) return "hall";
+  return aiOnStage ? "opp" : "";                        // 只在「我方上场」时推定；对方上场交给识别
+}
 /* 归属判定失败时的兜底：跟随上一片的归属（避免整场都停在「会场」而永不触发发言） */
 function followPrevWho(rec){
   const prev = transcript[transcript.length-2];
@@ -1053,7 +1154,16 @@ async function ingest(raw, segs){
   const haveFlow = (curStage >= 0) || !!floorWho;
   /* ★质询环节：一问一答双方交替开口，按钮/流程无法表达「现在谁在说」→ 强制走识别 */
   const quizAttr = (curKind === "quiz") && (cfg.quizAttr !== false);
-  const useAttr = !!cfg.attr || !haveFlow || quizAttr;
+  /* ★人机对辩且「对方 AI 上场」：声音有两路（我方一辩 + 对方 AI），必须识别区分 */
+  const crossOther = (curKind === "cross") && !!curTarget && !aiOnStage;
+  const useAttr = !!cfg.attr || !haveFlow || quizAttr || crossOther;
+  /* ★人机对辩：发言人可推定 → 直接落归属，既省一次识别、又不会误判成「会场」 */
+  const crossWho = crossForcedWho(newRaw);
+  if(!mappedWho && crossWho){
+    rec.who = crossWho; renderStream(); saveTranscript([{text:rec.text, who:rec.who}]);
+    if(rec.who === "opp"){ scheduleSpeakCheck(); maybeStreamPregenerate(); }
+    return;
+  }
   if(!mappedWho && !useAttr){
     const byFloor = (cfg.floorMode === false) ? "" : floorWho;
     if(byFloor === "ours" || byFloor === "opp"){
@@ -1125,6 +1235,9 @@ function maybeStreamPregenerate(){
 
 /* 「对方是否正在发言」：尾部是对方片段即算；若尾部是主席串场，看它之前是不是对方。 */
 function streamOppTalking(){
+  /* ★人机对辩优先：floor 在环节切换时是「主席」，会让整段抢跑失效 → 按 target 直接判 */
+  const cw0 = crossForcedWho("");
+  if(cw0) return cw0 === "opp";
   /* 流程模式下发言人是确定事实，直接采信（过渡期=主席，不算对方在说） */
   if(cfg.floorMode !== false && floorWho) return floorWho === "opp";
   const segs = transcript.slice(-6);
@@ -1306,10 +1419,13 @@ async function runSpeakCheck(){
     const st=$("speakState"); if(st) st.textContent="主持人已邀请我方发言";
     genRebut(true); return;
   }
-  if(last.who!=="opp") return;
+  /* ★人机对辩兜底：修复前识别的片段可能已按「会场」存进 transcript，这里再判一次，避免历史残留让它永不接话 */
+  if(last.who !== "opp" && crossForcedWho(last.text) !== "opp") return;
   /* ★ 发言后固定冷却：上一次我方播报结束后，固定等待 speakCooldown 秒才允许自动接话。
      目的：防止上一段刚播完就立刻接下一句。主席点名分支在上面，不受此限（点名必须接）。 */
-  const coolMs = Math.max(0, parseInt(cfg.speakCooldown)||0);
+  const coolBase = Math.max(0, parseInt(cfg.speakCooldown)||0);
+  /* ★人机对辩(cross)与自由辩论(free)是快速交替：20 秒冷却会让 AI 明显"装死"，接不上人停说，故压到 3 秒 */
+  const coolMs = (curKind === "cross" || curKind === "free") ? Math.min(coolBase, 3000) : coolBase;
   if(coolMs && lastPlayEndAt && Date.now()-lastPlayEndAt < coolMs){
     clearTimeout(speakTimer);
     const st=$("speakState"); if(st) st.textContent="发言后固定等待（还剩 "+Math.ceil((coolMs-(Date.now()-lastPlayEndAt))/1000)+"s）";
@@ -1785,7 +1901,7 @@ async function genRebutOmni(auto, opts){
   if(!isPre) preHold = false;              // 抢跑时保留 preHold（由 maybeStreamPregenerate 置位）
   if(isPre) preAudioBuf = [];              // 抢跑：暂存音频块，说完再一次性放出
   const ctx = transcript.map(s=>`[${WHO_LABEL[s.who]}] ${s.text}`).join("\n");
-  stopped=false; queue.length=0; lastSentences=[];
+  stopped=false; queue.length=0; lastSentences=[]; resetSpokenChars();
   stopStreamSpeak();                       // 作废旧轮次的播放
   $("speech").innerHTML=""; $("flags").innerHTML=""; $("metrics").innerHTML=""; $("stages").innerHTML="";
   $("structured").style.display="none"; $("scoreBox").style.display="none"; $("scoreMsg").textContent="";
@@ -1794,7 +1910,7 @@ async function genRebutOmni(auto, opts){
   $("btnGen").disabled=true; $("btnGen").textContent=auto?"自动生成中…":"生成中…";
   $("speakState").textContent="端到端生成中…";
   abortCtrl=new AbortController();
-  let lastEvAt=Date.now(), omniText="", gotAudio=false;
+  let lastEvAt=Date.now(), omniText="", gotAudio=false, omniSentBuf="";
   const babysit=setInterval(()=>{ if(Date.now()-lastEvAt>90000){ try{abortCtrl.abort();}catch(e){} } },5000);
   const bubble=document.createElement("div");
   bubble.className="sent"; bubble.style.opacity="0.7";
@@ -1804,11 +1920,12 @@ async function genRebutOmni(auto, opts){
     const resp = await fetch(api("/api/rebut-omni"), {
       method:"POST", signal:abortCtrl.signal,
       headers: authHeaders({"Content-Type":"application/json"}),
-      body: JSON.stringify({opponent: ctx, our_side: cfg.side||"待定", our_case: cfg.kase||"（未填）",
+      body: JSON.stringify({opponent: ctx, our_side: cfg.side||"待定", our_case: cfg.kase||"（未填）", stance: cfg.stance||"",
         topic: cfg.topic, duration: cfg.duration,
         voice: cfg.omniVoice||"", model: cfg.omniModel||"",
         chunk_sec: (chunkOn() && isPre) ? chunkFirstSec() : 0,
-        memory: summaryIsOn() ? summaryText() : ""})
+        memory: summaryIsOn() ? summaryText() : "",
+        system_extra: emphExtra()})
     });
     if(!resp.ok){ let m=resp.status; try{ m=(await resp.json()).detail||m; }catch(e){} throw new Error("服务返回 "+m); }
     const rd=resp.body.getReader(); const dec=new TextDecoder(); let buffer="";
@@ -1825,7 +1942,16 @@ async function genRebutOmni(auto, opts){
           if(ev.type==="text"){
             omniText += (ev.delta||"");
             bubble.textContent = omniText;
+            /* ★统一音色：端到端文本按句切出入队，交给同一个 TTS（与抢跑完全一致的嗓音/语气/语速） */
+            if(omniTtsOn()){
+              omniSentBuf += (ev.delta||"");
+              const cut = cutOmniSentences(omniSentBuf);
+              omniSentBuf = cut.rest;
+              for(const t of cut.done) pushOmniSentence(t);
+              if(!gotAudio){ gotAudio=true; $("speakState").textContent="播报中…（统一 TTS）"; }
+            }
           }else if(ev.type==="audio"){
+            if(omniTtsOn()) continue;          // 丢弃模型自带音频，声音统一由 TTS 产生
             const b64=ev.delta||""; if(!b64) continue;
             if(!gotAudio){ gotAudio=true; $("speakState").textContent="播报中…"; }
             const bin=atob(b64), u8=new Uint8Array(bin.length);
@@ -1835,6 +1961,9 @@ async function genRebutOmni(auto, opts){
             else spkPushPcm(u8, OMNI_INFO.sample_rate||24000);
           }else if(ev.type==="done"){
             if(ev.text && !omniText){ omniText=ev.text; bubble.textContent=omniText; }
+            if(omniTtsOn() && omniSentBuf.trim()){          // 收尾：末尾没有句号的半句也要播完
+              pushOmniSentence(omniSentBuf); omniSentBuf="";
+            }
             const info=document.createElement("div"); info.className="flag";
             info.textContent="⚡ 端到端通道 · 首字 "+(ev.first_text_ms!=null?ev.first_text_ms+"ms":"-")
               +" · 首音 "+(ev.first_audio_ms!=null?ev.first_audio_ms+"ms":"-")
@@ -1863,10 +1992,15 @@ async function genRebutOmni(auto, opts){
 }
 async function genRebut(auto, opts){
   if(genBusy) return;
-  // ★ 端到端通道：默认走 Omni（一次请求即拿到字幕+音频，省掉独立 TTS 两段）。
-  //   抢跑（opts.pre）也走 Omni：音频块先缓存、说完再一次性放出，
-  //   这样级联那条 7~18s 的不稳定长尾彻底消失（Omni 稳定 8~9s，抢跑时说完即可播）。
-  if(cfg.omni) return genRebutOmni(auto, opts);
+  /* ★输出模式（2026-10-20 三态，默认 hybrid）
+       hybrid：抢跑走级联分段（出稿即入队、preHold 只攒不播，说完立即放）；
+               抢跑稿没出来的情况（对方已说完、抢跑未触发、抢跑作废）才走端到端 Omni 兜底。
+       cascade：全程级联分段 + TTS；omni：全程端到端（含抢跑，音频先缓存后放）。
+       两条链路最终都进同一个扬声器缓冲池，音色与语速来源统一。 */
+  const _isPre = !!(opts && opts.pre);
+  const _mode = cfg.outMode || (cfg.omni ? "omni" : "hybrid");
+  if(_mode === "omni") return genRebutOmni(auto, opts);
+  if(_mode === "hybrid" && !_isPre) return genRebutOmni(auto, opts);
   // ★ 非「抢跑」（手动点生成、或正常时机出稿）→ 解除只攒不播，出句即播。
   //   抢跑稿（opts.pre）保持 preHold=true，等对方说完由 runSpeakCheck 放出。
   if(opts && opts.pre) preHold = true;        // 抢跑稿：只攒不播（不依赖调用方是否已置位）
@@ -1876,7 +2010,7 @@ async function genRebut(auto, opts){
   resetContinuation();
   preGenActive = !!(opts && opts.pre);
   const ctx = transcript.map(s=>`[${WHO_LABEL[s.who]}] ${s.text}`).join("\n");
-  stopped=false; queue.length=0; lastSentences=[];
+  stopped=false; queue.length=0; lastSentences=[]; resetSpokenChars();
   $("speech").innerHTML=""; $("flags").innerHTML=""; $("metrics").innerHTML=""; $("stages").innerHTML="";
   $("structured").style.display="none"; $("scoreBox").style.display="none"; $("scoreMsg").textContent="";
   document.querySelectorAll("#stars span").forEach(s=>s.classList.remove("on"));
@@ -1892,11 +2026,12 @@ async function genRebut(auto, opts){
     const resp = await fetch(api("/api/rebut"), {
       method:"POST", signal:abortCtrl.signal,
       headers: authHeaders({"Content-Type":"application/json"}),
-      body: JSON.stringify({opponent: ctx, our_side: cfg.side||"待定", our_case: cfg.kase||"（未填）",
+      body: JSON.stringify({opponent: ctx, our_side: cfg.side||"待定", our_case: cfg.kase||"（未填）", stance: cfg.stance||"",
         topic: cfg.topic, duration: cfg.duration, model: cfg.model||"",
         /* ★分段续写：抢跑时只让模型写第一段，剩下的边播边结合对方新发言续写 */
         chunk_sec: (chunkOn() && opts && opts.pre) ? chunkFirstSec() : 0,
-        memory: summaryIsOn() ? summaryText() : ""})
+        memory: summaryIsOn() ? summaryText() : "",
+        system_extra: emphExtra()})
     });
     if(!resp.ok){ let m=resp.status; try{ m=(await resp.json()).detail||m; }catch(e){} throw new Error("服务返回 "+m); }
     const rd=resp.body.getReader(); const dec=new TextDecoder(); let buffer="";
@@ -1933,7 +2068,10 @@ function handleEvent(ev){
     const el=document.createElement("div"); el.className="sent"; el.textContent=ev.idx+". "+ev.text;
     $("speech").appendChild(el);
     lastSentences.push({text:ev.text, el});
-    if($("autoSpeak").checked && !stopped) enqueue(ev.text, el);
+    if($("autoSpeak").checked && !stopped){
+      if(spokenChars >= charCap()){ if($("speakState")) $("speakState").textContent="已达本轮字数上限（约"+(cfg.duration||15)+"秒），后续内容仅显示不播报"; }
+      else { spokenChars += String(ev.text||"").length; enqueue(ev.text, el); }
+    }
   }
   else if(ev.type==="flag"){ const el=document.createElement("div"); el.className="flag"; el.textContent="⚠ "+ev.text; $("flags").appendChild(el); }
   else if(ev.type==="warn"){ const el=document.createElement("div"); el.className="warn"; el.textContent="· "+ev.text; $("flags").appendChild(el); }
@@ -2011,9 +2149,10 @@ async function genContinuation(){
     const ctx = transcript.map(s=>`[${WHO_LABEL[s.who]}] ${s.text}`).join("\n");
     const resp = await fetch(api("/api/rebut"), {method:"POST",
       headers: authHeaders({"Content-Type":"application/json"}),
-      body: JSON.stringify({opponent:ctx, our_side:cfg.side||"待定", our_case:cfg.kase||"（未填）",
+      body: JSON.stringify({opponent:ctx, our_side:cfg.side||"待定", our_case:cfg.kase||"（未填）", stance:cfg.stance||"",
         topic:cfg.topic, duration:cfg.duration, model:cfg.model||"",
-        memory: summaryIsOn()?summaryText():"",
+        memory: summaryIsOn() ? summaryText() : "",
+        system_extra: [cfg.extra||"", emphExtra()].filter(Boolean).join("\n"),
         continuation:{part:2, said, fresh, remain_sec:remain}})
     });
     if(!resp.ok) throw new Error("服务返回 "+resp.status);
@@ -2031,10 +2170,10 @@ async function genContinuation(){
           if(ev.type==="sentence" && ev.text){
             if(myGen!==speakGen || stopped) return;
             const el=document.createElement("div"); el.className="sent";
-            el.textContent=(lastSentences.length+1)+". "+ev.text;
+            el.textContent=(lastSentences.length+1)+". "+stripEmphMarks(ev.text);
             $("speech").appendChild(el);
             lastSentences.push({text:ev.text, el});
-            enqueue(ev.text, el);           // 直接接进正在播的时间轴
+            if(spokenChars < charCap()){ spokenChars += String(ev.text||"").length; enqueue(ev.text, el); }  // 封顶内才接进时间轴
           }else if(ev.type==="error"){ throw new Error(ev.error||"续写出错"); }
         }
       }
@@ -2049,15 +2188,16 @@ async function genContinuationOmni(said, fresh, remain){
   const ctx = transcript.map(s=>`[${WHO_LABEL[s.who]}] ${s.text}`).join("\n");
   const resp = await fetch(api("/api/rebut-omni"), {method:"POST",
     headers: authHeaders({"Content-Type":"application/json"}),
-    body: JSON.stringify({opponent:ctx, our_side:cfg.side||"待定", our_case:cfg.kase||"（未填）",
+    body: JSON.stringify({opponent:ctx, our_side:cfg.side||"待定", our_case:cfg.kase||"（未填）", stance:cfg.stance||"",
       topic:cfg.topic, duration:cfg.duration,
       voice:cfg.omniVoice||"", model:cfg.omniModel||"",
-      memory: summaryIsOn()?summaryText():"",
+      memory: summaryIsOn() ? summaryText() : "",
+      system_extra: [cfg.extra||"", emphExtra()].filter(Boolean).join("\n"),
       continuation:{part:2, said, fresh, remain_sec:remain}})
   });
   if(!resp.ok) throw new Error("服务返回 "+resp.status);
   const sr = (typeof OMNI_INFO!=="undefined" && OMNI_INFO.sample_rate) || 24000;
-  const rd=resp.body.getReader(), dec=new TextDecoder(); let buf="", txt="";
+  const rd=resp.body.getReader(), dec=new TextDecoder(); let buf="", txt="", osb="";
   while(true){
     const {done,value}=await rd.read(); if(done) break;
     buf+=dec.decode(value,{stream:true});
@@ -2069,27 +2209,36 @@ async function genContinuationOmni(said, fresh, remain){
         let ev; try{ ev=JSON.parse(line.slice(5).trim()); }catch(e){ continue; }
         if(ev.type==="text" && ev.delta){
           txt += ev.delta;
+          if(omniTtsOn()){                      // ★续写同样走统一 TTS，避免换声
+            osb += ev.delta;
+            const cut = cutOmniSentences(osb); osb = cut.rest;
+            for(const t of cut.done) pushOmniSentence(t);
+            continue;
+          }
           const mm = txt.match(/^[\s\S]*?[。！？…]/);
           if(mm){
             const sent = mm[0].trim(); txt = txt.slice(mm[0].length);
             if(sent){
               const el=document.createElement("div"); el.className="sent";
-              el.textContent=(lastSentences.length+1)+". "+sent;
+              el.textContent=(lastSentences.length+1)+". "+stripEmphMarks(sent);
               $("speech").appendChild(el);
               lastSentences.push({text:sent, el});
             }
           }
         }else if(ev.type==="audio" && ev.delta){
+          if(omniTtsOn()) continue;             // 统一音色：音频丢弃，只用文本
           try{ const bin=atob(ev.delta); const u8=new Uint8Array(bin.length);
             for(let k=0;k<bin.length;k++) u8[k]=bin.charCodeAt(k);
             spkPushPcm(u8, sr); }catch(e){}
+        }else if(ev.type==="done"){
+          if(omniTtsOn() && osb.trim()){ pushOmniSentence(osb); osb=""; }
         }else if(ev.type==="error"){ throw new Error(ev.message||ev.error||"续写出错"); }
       }
     }
   }
   if(txt.trim()){
     const el=document.createElement("div"); el.className="sent";
-    el.textContent=(lastSentences.length+1)+". "+txt.trim();
+    el.textContent=(lastSentences.length+1)+". "+stripEmphMarks(txt.trim());
     $("speech").appendChild(el); lastSentences.push({text:txt.trim(), el});
   }
 }
@@ -2104,27 +2253,101 @@ function unlockAudio(){
   try{ const a=new Audio(SILENT_WAV); a.volume=0; a.play().catch(()=>{}); audioUnlocked=true; }catch(e){}
 }
 /* TTS 预取：出句即并行合成，播放时音频已就绪，消除句与句之间的等待停顿 */
-const ttsCache = new Map();   // text -> Promise<Blob|null>
-function prefetchTTS(text){
+const ttsCache = new Map();   // key = rate|text -> Promise<Blob|null>
+function ttsKey(text, rate){ return (rate || "") + "|" + (text || ""); }
+function prefetchTTS(text, rate){
   if(!text) return null;
-  if(!ttsCache.has(text)){
+  const key = ttsKey(text, rate);
+  if(!ttsCache.has(key)){
     const ctl=new AbortController();
     const to=setTimeout(()=>{ try{ ctl.abort(); }catch(e){} }, 15000);   // 防止请求挂死拖停播报
     const p = fetch(api("/api/tts"), {method:"POST", signal:ctl.signal,
       headers: authHeaders({"Content-Type":"application/json"}),
-      body: JSON.stringify({text, voice:cfg.voice, rate:cfg.rate, model:cfg.ttsModel||"", emotion:cfg.emotion||""})})
+      body: JSON.stringify({text, voice:cfg.voice, rate:rate || cfg.rate, model:cfg.ttsModel||"", emotion:cfg.emotion||""})})
       .then(r => r.ok ? r.blob() : null).catch(()=>null).finally(()=>clearTimeout(to));
-    ttsCache.set(text, p);
+    ttsCache.set(key, p);
     if(ttsCache.size > 120){ ttsCache.delete(ttsCache.keys().next().value); }
   }
-  return ttsCache.get(text);
+  return ttsCache.get(key);
+}
+/* ★重要词慢速重读：稿件里用【慢】关键词【/慢】标记的片段单独降速合成。
+   实测（2026-10-20）：SSML 不被支持（break/prosody 会被当文本念出来），
+   但 speech_rate / speed 的「减速」完全可用（-30% → 时长×1.58，不吞音），
+   故采用「拆段 + 独立降速合成 + 同一时间轴拼接」方案。 */
+var EMPH_OPEN="【慢】", EMPH_CLOSE="【/慢】";
+function emphRate(){ return cfg.emphRate || "-30%"; }
+function segRate(emph){ return emph ? emphRate() : cfg.rate; }
+/* 让 AI 自己在稿子里标出「值得重读」的关键词（作为 memory 附加规则发给后端，不改后端签名） */
+function emphAutoRule(){
+  if(cfg.emphSpeak === false || cfg.emphAuto === false) return "";
+  return "【播报标记要求】在稿件中把你最想强调的关键词或短句用【慢】和【/慢】包起来"
+       + "（例：这个论点【慢】从根本上【/慢】就是错的），全篇最多 2 处，不要频繁使用；"
+       + "这两个标记本身不会被朗读出来。";
+}
+function emphExtra(){
+  const a = String(cfg.extra || cfg.systemExtra || "").trim();
+  const b = emphAutoRule();
+  return [a, b].filter(Boolean).join("\n");
+}
+function stripEmphMarks(t){
+  return String(t || "").split(EMPH_OPEN).join("").split(EMPH_CLOSE).join("");
+}
+function splitEmphParts(text){
+  text = String(text || "");
+  if(text.indexOf(EMPH_OPEN) < 0) return text.trim() ? [{text:text, emph:false}] : [];
+  const out=[]; let i=0;
+  while(i < text.length){
+    const a = text.indexOf(EMPH_OPEN, i);
+    if(a < 0){ if(text.slice(i).trim()) out.push({text:text.slice(i), emph:false}); break; }
+    if(a > i && text.slice(i,a).trim()) out.push({text:text.slice(i,a), emph:false});
+    const b = text.indexOf(EMPH_CLOSE, a + EMPH_OPEN.length);
+    if(b < 0){ out.push({text:text.slice(a + EMPH_OPEN.length), emph:true}); break; }
+    if(text.slice(a + EMPH_OPEN.length, b).trim()) out.push({text:text.slice(a + EMPH_OPEN.length, b), emph:true});
+    i = b + EMPH_CLOSE.length;
+  }
+  return out.length ? out : [{text:stripEmphMarks(text), emph:false}];
+}
+/* ★统一音色（2026-10-20）：端到端通道只取「字幕文本」，音频交给同一个 TTS 播报，
+   避免「抢跑时是龙安鲁风、兜底时变成 Ethan」这种一台机器两种嗓音。 */
+function omniTtsOn(){ return cfg.omniTts !== false; }
+/* 把流式文本按句末标点切出完整句 */
+function cutOmniSentences(buf){
+  const done = [], END = "。！？…\n";
+  let start = 0;
+  for(let i=0;i<buf.length;i++){
+    if(END.includes(buf[i])){
+      let j = i+1;
+      while(j<buf.length && END.includes(buf[j]) && buf[j] !== "\n") j++;
+      const t = buf.slice(start, j).trim();
+      if(t) done.push(t);
+      start = j; i = j-1;
+    }
+  }
+  return { done, rest: buf.slice(start) };
+}
+function pushOmniSentence(t){
+  const txt = String(t||"").trim(); if(!txt) return;
+  const el = document.createElement("div"); el.className="sent"; el.textContent = txt;
+  if($("speech")) $("speech").appendChild(el);
+  lastSentences.push({text:txt, el});
+  if(spokenChars >= charCap()) return;            // 字数封顶（与级联同一口径）
+  spokenChars += txt.length;
+  enqueue(txt, el);
 }
 function enqueue(text, el){
-  queue.push({text, el});
+  const useEmph = cfg.emphSpeak !== false;
+  const parts = useEmph ? splitEmphParts(text) : [{text:stripEmphMarks(text), emph:false}];
+  for(const p of parts){
+    const t=(p.text || "").trim();
+    if(!t) continue;
+    const item={text:t, el:el, emph:!!p.emph};
+    queue.push(item);
+    if(cfg.streamTts===false || preHold) prefetchTTS(t, segRate(item.emph));
+  }
   /* ★ 抢跑期（preHold）也预合成：稿子在对方发言期间就入队，此时把 TTS 一并跑掉，
      等人按下「立即发言」或对方说完时，音频已在缓存里，开口延迟≈0。
      整段合成模式本来就出句即合成；流式模式此前不预取，是「说完还要等 0.4s」的主因。 */
-  if(cfg.streamTts===false || preHold) prefetchTTS(text);
+  // （逐子段预取已在上面循环里完成，此处不再整句重复预取）
   // ★ 流式抢跑模式：对方还在说时已抢先出稿，此时只攒不播（preHold），
   //   等对方说完/主席点名再一次性放出——把 LLM 那十几秒藏进对方发言时间里。
   if(!playing && !preHold) drain();
@@ -2136,6 +2359,7 @@ async function takeSeg(waitMs){
   const first=queue.shift();
   if(!first) return null;
   let text=first.text, els=first.el?[first.el]:[], parts=[first.text];
+  const emph=first.emph===true;          // ★慢读段独立成段，不与普通段合并
   const t0=Date.now();
   while(!stopped && text.length < SPEAK_MERGE_MAX){
     if(!queue.length){
@@ -2144,11 +2368,12 @@ async function takeSeg(waitMs){
       continue;
     }
     const nxt=queue[0];
+    if((nxt.emph===true) !== emph) break;   // ★语速不同，不能并进同一段
     if(text.length + nxt.text.length > SPEAK_MERGE_MAX + 20) break;
     queue.shift(); text += nxt.text; parts.push(nxt.text);
     if(nxt.el) els.push(nxt.el);
   }
-  return {text, els, parts};
+  return {text, els, parts, emph};
 }
 /* ★流水线播报（进一步优化连贯性）：
    1) 首段「边收边播」，首字延迟低；
@@ -2184,26 +2409,27 @@ async function drain(){
           }
           if(!queue.length) break; continue;
         }
-        cur={seg:s, p:(startedAny? fetchSegPcm(s.text) : null)};   // 首段稍后边收边播，不重复预取
+        cur={seg:s, p:(startedAny? fetchSegPcm(s.text, segRate(s.emph)) : null)};   // 首段稍后边收边播，不重复预取
       }
       const seg=cur.seg;
       // 预切并预取「下一段」——与当前段播放并行
       if(!pending){
         const nx=await takeSeg(0);
-        if(nx){ pending={seg:nx, p:fetchSegPcm(nx.text)}; prefetchTTS(nx.text); }
+        if(nx){ pending={seg:nx, p:fetchSegPcm(nx.text, segRate(nx.emph))}; prefetchTTS(nx.text, segRate(nx.emph)); }
       }
       seg.els.forEach(el=>el.classList.add("speaking"));
       $("speakState").textContent="播报中："+seg.text.slice(0,12)+"…";
       try{
         suspended=true;                                  // 播报期间暂停收音（回声隔离）
         const parts = seg.parts || [seg.text];
-        const allCached = !startedAny && parts.every(t => ttsCache.has(t));
+        const allCached = !startedAny && parts.every(t => ttsCache.has(ttsKey(t, segRate(seg.emph))));
+        if(!startedAny && seg.emph) segMode = true;      // 首段即慢读段：走整段合成才能带上降速
         if(segMode || allCached){
           /* 抢跑期已逐句预合成 → 逐句顺序播，命中即出声（合并后的整段文本对不上缓存，故按原句播） */
           segMode = true;
           let got = false;
           for(const pText of (allCached ? parts : [seg.text])){
-            const blob = ttsCache.has(pText) ? await ttsCache.get(pText) : await prefetchTTS(pText);
+            const blob = ttsCache.has(ttsKey(pText, segRate(seg.emph))) ? await ttsCache.get(ttsKey(pText, segRate(seg.emph))) : await prefetchTTS(pText, segRate(seg.emph));
             if(!blob) throw new Error("合成失败");
             if(stopped || myGen!==speakGen) break;
             got = true; await playBlob(blob);
@@ -2222,7 +2448,7 @@ async function drain(){
         startedAny=true;
       }catch(e){
         if(stopped||myGen!==speakGen) break;
-        const blob=await prefetchTTS(seg.text).catch(()=>null);   // 流式失败 → 回退整段 mp3
+        const blob=await prefetchTTS(seg.text, segRate(seg.emph)).catch(()=>null);   // 流式失败 → 回退整段 mp3
         if(blob){ await playBlob(blob); startedAny=true; }
         else{ const f=document.createElement("div"); f.className="flag"; f.textContent="播报失败："+e.message; $("flags").appendChild(f); }
       }
@@ -2302,16 +2528,17 @@ function trimSilence(f, thr, keepMs, sr){
 }
 /* 整段预取：把一段文本的流式 WAV 完整收回并解析为 PCM（供无缝续接使用） */
 const segCache=new Map();   // text -> Promise<{sr, chunks:Float32Array[]}>
-function fetchSegPcm(text){
+function fetchSegPcm(text, rate){
   if(!text) return Promise.resolve(null);
-  if(segCache.has(text)) return segCache.get(text);
+  const ck = (rate || "") + "|" + text;
+  if(segCache.has(ck)) return segCache.get(ck);
   const p=(async()=>{
     const ctl=new AbortController();
     const to=setTimeout(()=>{ try{ctl.abort();}catch(e){} }, 20000);   // 防止请求挂死
     try{
       const resp=await fetch(api("/api/tts-stream"), {method:"POST", signal:ctl.signal,
         headers:authHeaders({"Content-Type":"application/json"}),
-        body: JSON.stringify({text, voice:cfg.voice, rate:cfg.rate, model:cfg.ttsModel||"", emotion:cfg.emotion||""})});
+        body: JSON.stringify({text, voice:cfg.voice, rate:rate || cfg.rate, model:cfg.ttsModel||"", emotion:cfg.emotion||""})});
       if(!resp.ok || !resp.body) throw new Error("stream "+resp.status);
       const rd=resp.body.getReader(); const parser=makeWavParser();
       const chunks=[]; let sr=24000;
@@ -2329,7 +2556,7 @@ function fetchSegPcm(text){
       return {sr, chunks};
     } finally { clearTimeout(to); }
   })();
-  segCache.set(text, p);
+  segCache.set(ck, p);
   if(segCache.size > 60) segCache.delete(segCache.keys().next().value);
   return p;
 }
@@ -2375,6 +2602,11 @@ function waitDrained(myGen){
     }, 100);
   });
 }
+/* ★字数封顶：把「本轮发言」压在目标时长内（默认 15 秒 → 约 92 字），
+   防止模型写长导致现场超时。只统计已入队要播的字，界面上的全文照常显示。 */
+let spokenChars = 0;
+function charCap(){ return Math.round((cfg.duration||15) * 5.5 * 1.12); }
+function resetSpokenChars(){ spokenChars = 0; }
 function spkResetPlayback(){
   spkPend=[]; spkPendLen=0; spkStarted=false;
   if(spkPump){ clearInterval(spkPump); spkPump=null; }
@@ -2520,7 +2752,8 @@ function buzzStart(){
       /* 大屏广播环节类型 → ①是否自由辩论 ②环节过渡期发言权默认归主席 */
       if(act === "stage"){
         const was = freeMode; freeMode = (ev.kind === "free"); freeOwner = ""; freeLastSide = "";
-        curStage = (typeof ev.stage === "number") ? ev.stage : curStage;
+        curStage = (typeof ev.stage === "number") ? ev.stage
+                 : (ev.stage != null && ev.stage !== "" && !isNaN(Number(ev.stage)) ? Number(ev.stage) : curStage);
         curKind  = ev.kind || "";
         curStageSide = ev.side || "";
         curTarget = ev.target || null;
@@ -2537,6 +2770,8 @@ function buzzStart(){
         if(w === "hall") setFloor("hall", ev.reason||"flow");
         else if(w === "both") setFloor("both", ev.reason||"flow");
         else setFloor(sideWho(w), ev.reason||"flow");
+        /* ★真人按下按钮 = 真人开口 → AI 立即闭嘴（人优先，不管是不是同侧） */
+        if(ev.human && playing) abortSpeak("真人开始发言");
         return;
       }
       /* 仲裁结果：谁抢到了发言权 */
@@ -2556,7 +2791,7 @@ function buzzStart(){
         setFloor(sideWho(side), "free");
         /* ★只有「AI 的 claim 被拒」才闭嘴；按钮侧的 deny（同侧接力/该换边）与 AI 无关，
            否则我方队友按错键会把正在说话的 AI 掐掉 */
-        if(sideWho(side) === "ours" && (ev.reason === "claim" || !ev.reason)) abortSpeak("未抢到发言权");
+        if(sideWho(side) === "ours" && (ev.reason === "claim" || ev.reason === "human-takeover" || !ev.reason)) abortSpeak(ev.reason === "human-takeover" ? "真人接管发言" : "未抢到发言权");
         return;
       }
       /* 发言权空出来了 → 有稿才去抢 */
@@ -2665,6 +2900,7 @@ loadVoices().then(()=>{
 loadAsrModels().then(()=>{ if(cfg.asrModel) $("cfgAsrModel").value = cfg.asrModel; });
 loadModels();
 loadOmniStatus();
+loadMaterials();
 renderSummary();
 
 /* ---------------- 长期总结：按钮与状态 ---------------- */

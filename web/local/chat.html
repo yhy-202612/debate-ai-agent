@@ -1,0 +1,928 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>辩论 AI · 对话模式（正方版）</title>
+<style>
+  :root{
+    --bg:#0b1220; --panel:#131c2e; --panel2:#1b2740; --line:#2a3a58;
+    --text:#e6edf7; --muted:#93a3bd; --brand:#c0392b; --brand2:#2f6fed;
+    --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.65 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+  header{padding:12px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  header h1{font-size:16px;margin:0;font-weight:700}
+  .tag{font-size:12px;color:var(--muted);border:1px solid var(--line);padding:2px 8px;border-radius:999px}
+  header .sp{margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  main{max-width:1400px;margin:0 auto;padding:14px;display:grid;grid-template-columns:1.6fr 1fr;gap:14px;height:calc(100vh - 96px)}
+  @media(max-width:960px){main{grid-template-columns:1fr;height:auto}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;display:flex;flex-direction:column;min-height:0}
+  .card h2{font-size:12px;margin:0;padding:11px 14px;color:var(--muted);font-weight:700;letter-spacing:.04em;
+    text-transform:uppercase;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px}
+  .card h2 .r{margin-left:auto;font-weight:500;text-transform:none;letter-spacing:0;font-size:12px}
+  button{cursor:pointer;border:none;border-radius:9px;padding:8px 13px;font:inherit;font-weight:600;font-size:13px;transition:.15s}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  .b-main{background:var(--brand);color:#fff}
+  .b-blue{background:var(--brand2);color:#fff}
+  .b-ghost{background:var(--panel2);color:var(--text);border:1px solid var(--line)}
+  .b-rec{background:#3a1414;color:#ff9b9b;border:1px solid #7f1d1d}
+  .b-rec.on{background:#ef4444;color:#fff}
+  .b-mini{padding:2px 7px;font-size:12px;border-radius:6px;background:var(--panel2);border:1px solid var(--line);color:var(--muted)}
+  input,textarea,select{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--text);
+    border-radius:8px;padding:8px;font:inherit;font-size:14px}
+  textarea{resize:none}
+  #chatList{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px}
+  .msg{max-width:82%;padding:9px 13px;border-radius:12px;white-space:pre-wrap;word-break:break-word;font-size:14.5px}
+  .msg.me{align-self:flex-end;background:#1d3a6b;border:1px solid #2f5c9e}
+  .msg.ai{align-self:flex-start;background:var(--panel2);border:1px solid var(--line)}
+  .msg.ai.streaming{opacity:.85}
+  .msg .who{display:block;font-size:11px;color:var(--muted);margin-bottom:3px}
+  .composer{border-top:1px solid var(--line);padding:10px 12px;display:flex;gap:8px;align-items:flex-end}
+  .composer textarea{min-height:44px;max-height:120px}
+  #memBox{flex:1;overflow-y:auto;padding:12px 14px;font-size:13.5px}
+  .sec{margin-bottom:14px}
+  .sec h3{font-size:12px;color:var(--muted);margin:0 0 6px;font-weight:700;display:flex;align-items:center;gap:6px}
+  .item{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:7px 10px;margin-bottom:6px;position:relative}
+  .item b{display:block;font-size:13px;color:#cfe0ff;margin-bottom:2px}
+  .item .ops{position:absolute;right:6px;top:6px;display:flex;gap:4px}
+  .chip{display:inline-block;background:#1b2740;border:1px solid var(--line);border-radius:999px;
+    padding:2px 9px;font-size:12px;margin:0 4px 4px 0;color:#b9cbe6}
+  .empty{color:var(--muted);font-size:13px}
+  .state{font-size:12px;color:var(--muted)}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#666;margin-right:6px;vertical-align:middle}
+  .dot.ok{background:var(--ok)} .dot.busy{background:var(--warn)} .dot.err{background:var(--bad)}
+  .ctxbar{display:flex;gap:14px;align-items:center;padding:8px 14px;border-bottom:1px solid var(--line);
+    font-size:12px;color:var(--muted);flex-wrap:wrap;background:#0f1828}
+  .ctxbar label{display:flex;align-items:center;gap:5px;cursor:pointer;margin:0}
+  .ctxbar input{width:auto;margin:0}
+  #dlg{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;padding:20px;z-index:50}
+  #dlg.show{display:flex}
+  #dlgBox{background:var(--panel);border:1px solid var(--line);border-radius:14px;max-width:620px;width:100%;
+    max-height:88vh;overflow:auto;padding:18px}
+  #dlgBox h3{margin:0 0 12px;font-size:15px}
+  .fld{margin-bottom:12px}
+  .fld label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+  .sw{display:flex;align-items:center;gap:10px;margin:9px 0}
+  .sw input{width:auto}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>💬 对话模式</h1>
+  <span class="tag" id="modeTag">端到端</span>
+  <span class="tag" id="cloudTag" title="对话数据保存在服务器">☁ 未同步</span>
+  <span class="tag" id="matTag" title="队内共识已注入对话提示词">📚 队内资料 …</span>
+  <span class="tag"><a href="/debate/local/debate-local.html" style="color:#93a3bd;text-decoration:none">← 返回辩论模式</a></span>
+  <div class="sp">
+    <span class="state"><span class="dot" id="dot"></span><span id="stateTxt">就绪</span></span>
+    <label class="state" style="display:flex;align-items:center;gap:6px;margin:0">
+      <input type="checkbox" id="autoJoin"> AI 自主参与
+    </label>
+    <button class="b-ghost" id="btnSummarize">总结一下</button>
+    <button class="b-ghost" id="btnSettings">⚙ 设置</button>
+  </div>
+</header>
+
+<!-- ★上下文来源勾选：AI 说话时把哪些数据喂给它 -->
+<div class="ctxbar">
+  <span>AI 说话时带入：</span>
+  <label><input type="checkbox" id="useFull" checked> 未总结对话原文</label>
+  <label><input type="checkbox" id="useMemory" checked> 对话总结数据</label>
+  <label><input type="checkbox" id="useDistill"> 蒸馏结果（人工上传）</label>
+  <span id="ctxInfo" style="margin-left:auto"></span>
+</div>
+
+<main>
+  <section class="card">
+    <h2>对话<span class="r" id="hint">说句话，或直接输入</span></h2>
+    <div id="chatList"></div>
+    <div class="composer">
+      <button class="b-rec" id="btnMic" title="常开语音：点一下开始持续监听（边录边识别），再点一下停止">🎤</button>
+      <textarea id="input" rows="1" placeholder="输入内容，Enter 发送（Shift+Enter 换行）"></textarea>
+      <button class="b-main" id="btnSend">发送</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>讨论记忆<span class="r" id="memState">0 轮</span></h2>
+    <div id="memBox">
+      <div class="sec"><h3>📌 讨论要点 / 资料</h3><div id="memNotes"><div class="empty">还没有总结</div></div></div>
+      <div class="sec"><h3>🎯 你的偏好 <button class="b-mini" id="btnAddPref">＋</button></h3><div id="memPrefs"><div class="empty">—</div></div></div>
+      <div class="sec"><h3>🧭 话题</h3><div id="memTopics"><div class="empty">—</div></div></div>
+      <div class="sec"><h3>📝 整体概括</h3><div id="memSummary" class="empty">—</div></div>
+    </div>
+  </section>
+</main>
+
+<div id="dlg"><div id="dlgBox">
+  <h3>设置</h3>
+  <div class="fld"><label>讨论主题（可不填）</label><input id="cfgTopic" placeholder="例如：人工智能与人的价值"></div>
+  <div class="fld"><label>通道</label>
+    <select id="cfgMode">
+      <option value="omni">端到端（一步出语音，默认）</option>
+      <option value="cascade">级联（GLM-5.3 文本 + TTS 播报）</option>
+    </select>
+  </div>
+  <div class="fld"><label>模型（级联时生效，默认 GLM-5.3）</label>
+    <select id="cfgModel">
+      <option value="glm-5.3">GLM-5.3 · 强推理（默认）</option>
+      <option value="glm-5.3-flash">GLM-5.3-Flash · 快</option>
+      <option value="deepseek-flash">DeepSeek-Flash · 快</option>
+      <option value="claude-sonnet-5-5">Claude Sonnet 5.5</option>
+    </select>
+  </div>
+  <div class="fld"><label>端到端音色</label><select id="cfgVoice"><option value="">默认</option></select></div>
+  <div class="fld"><label>语音识别模型（端到端模式也用它出文本，供总结与查看）</label>
+    <select id="cfgAsr"><option value="">默认</option></select>
+  </div>
+  <div class="fld"><label>总结模型（影响总结速度与细致度）</label>
+    <select id="cfgSumModel">
+      <option value="glm-5.3-flash">快 · 约 5 秒（推荐）</option>
+      <option value="glm-5.3">细致 · 约 25 秒</option>
+      <option value="deepseek-flash">DeepSeek-Flash · 约 10 秒</option>
+    </select>
+  </div>
+  <div class="fld"><label>自动断句（说完多久算一句结束）</label>
+    <select id="cfgSilence">
+      <option value="500">0.5 秒 · 灵敏（说话快、爱抢话）</option>
+      <option value="650">0.65 秒 · 默认</option>
+      <option value="900">0.9 秒 · 稳重（常思考再开口）</option>
+      <option value="1300">1.3 秒 · 很稳重（边说边想）</option>
+    </select>
+  </div>
+  <div class="fld"><label>自定义提示词（可选）</label><textarea id="cfgExtra" rows="3" placeholder="例如：多举生活化的例子"></textarea></div>
+
+  <hr style="border:none;border-top:1px solid var(--line);margin:14px 0">
+  <div class="fld"><label>蒸馏结果（人工整理，供 AI 参考；可上传 txt/md 或直接粘贴）</label>
+    <input type="file" id="distillFile" accept=".txt,.md,.json,.csv" style="margin-bottom:6px">
+    <textarea id="distillText" rows="6" placeholder="粘贴整理好的要点、结论、数据……"></textarea>
+    <div style="display:flex;gap:8px;margin-top:6px">
+      <button class="b-ghost" id="btnSaveDistill">保存到云端</button>
+      <button class="b-ghost" id="btnClearDistill">清空</button>
+      <span class="state" id="distillState"></span>
+    </div>
+  </div>
+
+  <div class="sw"><input type="checkbox" id="cfgSpeak"><label for="cfgSpeak" style="margin:0">级联模式下也语音播报</label></div>
+  <div class="sw"><input type="checkbox" id="cfgAutoSum" checked><label for="cfgAutoSum" style="margin:0">每 4 轮自动总结（端到端同样生效）</label></div>
+  <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+    <button class="b-ghost" id="btnClear">清空对话</button>
+    <button class="b-main" id="btnCloseDlg">完成</button>
+  </div>
+</div></div>
+
+<script>
+/* ================= 基础 ================= */
+const $ = id => document.getElementById(id);
+const DEFAULTS = {
+  base: "http://120.48.43.211/debate", topic: "", mode: "omni", model: "glm-5.3",
+  voice: "", extra: "", speakCascade: false, autoSum: true, autoJoin: false,
+  useFull: true, useMemory: true, useDistill: false, asrModel: "", silence: "650",
+  sumModel: "glm-5.3-flash",
+};
+let cfg = Object.assign({}, DEFAULTS);
+try{ Object.assign(cfg, JSON.parse(localStorage.getItem("debate_chat_cfg")||"{}")); }catch(e){}
+function saveCfg(){ try{ localStorage.setItem("debate_chat_cfg", JSON.stringify(cfg)); }catch(e){} }
+
+/* 会话 id：云端存一份，换浏览器/清缓存也能找回 */
+let sid = localStorage.getItem("debate_chat_sid") || "";
+if(!sid){ sid = "c_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4); }
+localStorage.setItem("debate_chat_sid", sid);
+
+let msgs = [];
+let memory = { notes: [], prefs: [], topics: [], summary: "", lastSummedIndex: 0 };
+let distill = { text: "", name: "", updatedAt: 0 };
+
+/* ★页面走 HTTPS 时，必须把同源的 http:// 服务地址升级为 https://，
+   否则浏览器按 Mixed Content 直接拦截全部请求（表现为「不回复、不总结、识别也没反应」） */
+function normBase(u){
+  let s = String(u || "").replace(/\/+$/, "");
+  try{
+    if(location.protocol === "https:" && /^http:\/\//i.test(s)){
+      const bu = new URL(s);
+      if(bu.host === location.host) s = "https://" + bu.host + bu.pathname.replace(/\/+$/, "");
+    }
+  }catch(e){}
+  return s;
+}
+function api(p){ return normBase(cfg.base) + p; }
+function setState(txt, cls){
+  $("stateTxt").textContent = txt;
+  $("dot").className = "dot" + (cls ? " " + cls : "");
+}
+function setCloud(txt, ok){
+  $("cloudTag").textContent = txt;
+  $("cloudTag").style.color = ok ? "#22c55e" : "#93a3bd";
+}
+
+/* ================= 云端存储 ================= */
+let cloudTimer = null, cloudDirty = null;
+function cloudSave(patch){
+  cloudDirty = Object.assign(cloudDirty || {}, patch);
+  clearTimeout(cloudTimer);
+  cloudTimer = setTimeout(pushCloud, 700);
+}
+async function pushCloud(){
+  const patch = cloudDirty; cloudDirty = null;
+  if(!patch) return;
+  try{
+    const r = await fetch(api("/api/chat-store/save"), {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(Object.assign({ sid }, patch))
+    });
+    if(r.ok) setCloud("☁ 已同步 " + new Date().toLocaleTimeString(), true);
+    else setCloud("☁ 同步失败 " + r.status, false);
+  }catch(e){ setCloud("☁ 同步失败（离线？）", false); }
+}
+async function pullCloud(){
+  try{
+    const r = await fetch(api("/api/chat-store/get?sid=" + encodeURIComponent(sid)));
+    if(!r.ok) return;
+    const d = await r.json();
+    if(d && Array.isArray(d.messages) && d.messages.length) msgs = d.messages;
+    if(d && d.memory) memory = Object.assign(memory, d.memory);
+    if(d && d.distill) distill = Object.assign(distill, d.distill);
+    renderChat(); renderMemory(); fillDistill();
+    setCloud("☁ 已载入云端 " + (d.messages||[]).length + " 条", true);
+  }catch(e){ setCloud("☁ 云端不可用（本地模式）", false); }
+}
+
+/* ================= 音频 ================= */
+let ac = null, nextTime = 0;
+function ensureAC(){
+  if(!ac){ ac = new (window.AudioContext||window.webkitAudioContext)(); nextTime = 0; }
+  if(ac.state === "suspended") ac.resume();
+  return ac;
+}
+function playPcmB64(b64){
+  try{
+    const ctx = ensureAC();
+    const bin = atob(b64);
+    const u8 = new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++) u8[i] = bin.charCodeAt(i);
+    const i16 = new Int16Array(u8.buffer, 0, Math.floor(u8.length/2));
+    const f32 = new Float32Array(i16.length);
+    for(let i=0;i<i16.length;i++) f32[i] = i16[i]/32768;
+    const buf = ctx.createBuffer(1, f32.length, 24000);
+    buf.copyToChannel(f32, 0);
+    const src = ctx.createBufferSource();
+    src.buffer = buf; src.connect(ctx.destination);
+    const t = Math.max(ctx.currentTime + 0.04, nextTime);
+    src.start(t); nextTime = t + buf.duration;
+    /* AI 还在出声 → 这段时间不收音，避免把自己的播报录回去 */
+    aiQuietUntil = Date.now() + Math.max(0, (nextTime - ctx.currentTime)) * 1000 + 500;
+  }catch(e){}
+}
+
+/* ================= 渲染 ================= */
+function escapeHtml(s){
+  return String(s).replace(/[&<>]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;" }[c]));
+}
+function renderChat(){
+  const box = $("chatList");
+  box.innerHTML = "";
+  if(!msgs.length && !asrPreview){
+    box.innerHTML = '<div class="empty" style="padding:8px">还没有对话。直接说话或输入都行。</div>';
+    return;
+  }
+  for(const m of msgs){
+    const d = document.createElement("div");
+    d.className = "msg " + (m.role === "user" ? "me" : "ai") + (m.streaming ? " streaming" : "");
+    d.innerHTML = (m.role === "user" ? "" : '<span class="who">AI</span>') + escapeHtml(m.content || "…");
+    box.appendChild(d);
+  }
+  if(asrPreview){
+    const pv = document.createElement("div");
+    pv.className = "msg me streaming";
+    pv.innerHTML = '<span class="who">正在识别…</span>' + escapeHtml(asrPreview);
+    box.appendChild(pv);
+  }
+  box.scrollTop = box.scrollHeight;
+}
+
+function renderMemory(){
+  const ns = memory.notes || [], ps = memory.prefs || [], ts = memory.topics || [];
+  $("memNotes").innerHTML = ns.length
+    ? ns.map((n,i) => `<div class="item"><div class="ops"><button class="b-mini" data-note-del="${i}">✕</button></div>
+        <b>${escapeHtml(n.title||"要点")}</b>${escapeHtml(n.content||"")}</div>`).join("")
+    : '<div class="empty">还没有总结</div>';
+  $("memPrefs").innerHTML = ps.length
+    ? ps.map((p,i) => `<div class="item"><div class="ops">
+        <button class="b-mini" data-pref-edit="${i}">✎</button>
+        <button class="b-mini" data-pref-del="${i}">✕</button></div>${escapeHtml(p)}</div>`).join("")
+    : '<div class="empty">—</div>';
+  $("memTopics").innerHTML = ts.length
+    ? ts.map(t => `<span class="chip">${escapeHtml(t)}</span>`).join("")
+    : '<div class="empty">—</div>';
+  $("memSummary").textContent = memory.summary || "—";
+  $("memSummary").className = memory.summary ? "" : "empty";
+  $("memState").textContent = (msgs.filter(m=>m.role==="user").length) + " 轮";
+  updateCtxInfo();
+}
+function fillDistill(){
+  $("distillText").value = distill.text || "";
+  $("distillState").textContent = distill.text ? ("已保存 " + distill.text.length + " 字") : "未上传";
+}
+/* 未总结段 */
+function unsummarized(){
+  const real = msgs.filter(m => !m.streaming);
+  const from = Math.min(memory.lastSummedIndex || 0, real.length);
+  return real.slice(from);
+}
+function updateCtxInfo(){
+  const u = unsummarized().length;
+  $("ctxInfo").textContent = "未总结 " + u + " 条 · 资料 " + (memory.notes||[]).length +
+    " 条 · 偏好 " + (memory.prefs||[]).length + " 条" +
+    (distill.text ? " · 蒸馏 " + distill.text.length + " 字" : "");
+  updateHint();
+}
+/* 端到端模式下 Omni 只出音频，用户侧文本全靠 ASR —— 没开常开语音就没有文字可看、总结也缺料 */
+function updateHint(){
+  const el = $("hint");
+  if(!el) return;
+  const needAsr = (cfg.mode === "omni") && !listening;
+  if(needAsr){
+    el.textContent = "端到端模式：点 🎤 开常开语音，否则你的话没有文字，总结会缺料";
+    el.style.color = "#f59e0b";
+  }else{
+    el.textContent = listening ? "在听…说完自动识别" : "说句话，或直接输入";
+    el.style.color = "";
+  }
+}
+
+/* ================= 发送 / 对话 ================= */
+let genBusy = false;
+
+async function send(text){
+  text = (text || "").trim();
+  if(!text || genBusy) return;
+  msgs.push({ role:"user", content:text, ts:Date.now() });
+  renderChat(); updateCtxInfo();
+  cloudSave({ messages: msgs });
+  if(cfg.autoJoin) askAi();
+  else{
+    setState("已记录（自主参与关闭，只总结）", "");
+    maybeSummarize();
+  }
+}
+
+async function askAi(){
+  if(genBusy) return;
+  genBusy = true;
+  setState("思考中…", "busy");
+  $("btnSend").disabled = true;
+  const slot = { role:"assistant", content:"", streaming:true };
+  msgs.push(slot);
+  renderChat();
+
+  const real = msgs.filter(m => !m.streaming);
+  const unsum = cfg.useFull ? unsummarized() : [];
+  const payload = {
+    messages: real.slice(-14).map(m => ({ role:m.role, content:m.content })),
+    topic: cfg.topic || "",
+    notes: cfg.useMemory ? (memory.notes||[]) : [],
+    prefs: cfg.useMemory ? (memory.prefs||[]) : [],
+    topics: cfg.useMemory ? (memory.topics||[]) : [],
+    unsummarized: unsum.map(m => ({ role:m.role, content:m.content })),
+    use_full: !!cfg.useFull,
+    use_memory: !!cfg.useMemory,
+    use_distill: !!(cfg.useDistill && (distill.text||"").trim()),
+    distill: distill.text || "",
+    mode: cfg.mode,
+    model: (cfg.mode === "omni") ? "" : cfg.model,   // 端到端不吃文本模型名
+    voice: cfg.voice || "",
+    system_extra: cfg.extra || ""
+  };
+
+  try{
+    const ctrl = new AbortController();
+    const timer = setTimeout(()=>ctrl.abort(), 90000);
+    const r = await fetch(api("/api/chat"), {
+      method:"POST", headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify(payload), signal: ctrl.signal
+    });
+    clearTimeout(timer);
+    if(!r.ok) throw new Error("HTTP " + r.status + " " + (await r.text()).slice(0,120));
+
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "", pendingAudio = [];
+
+    while(true){
+      const { value, done: end } = await reader.read();
+      if(end) break;
+      buf += dec.decode(value, { stream:true });
+      let i;
+      while((i = buf.indexOf("\n\n")) >= 0){
+        const raw = buf.slice(0, i).trim();
+        buf = buf.slice(i + 2);
+        if(!raw.startsWith("data:")) continue;
+        let ev; try{ ev = JSON.parse(raw.slice(5).trim()); }catch(e){ continue; }
+        if(ev.type === "text"){ slot.content += ev.delta || ""; renderChat(); }
+        else if(ev.type === "audio"){ pendingAudio.push(ev.delta); }
+        else if(ev.type === "error"){
+          slot.content = (slot.content ? slot.content + "\n" : "") + "[出错] " + (ev.message || "");
+          renderChat();
+        }else if(ev.type === "done"){ if(ev.text) slot.content = ev.text; }
+      }
+    }
+    slot.streaming = false;
+    slot.ts = Date.now();
+    slot.content = (slot.content || "").trim() || "（没有回应）";
+    renderChat();
+    cloudSave({ messages: msgs });
+
+    if(cfg.mode === "omni" && pendingAudio.length){
+      for(const a of pendingAudio) playPcmB64(a);
+    }else if(cfg.mode !== "omni" && cfg.speakCascade && slot.content){
+      speakText(slot.content);
+    }
+    setState("就绪", "ok");
+    maybeSummarize();
+  }catch(e){
+    slot.streaming = false;
+    slot.content = slot.content || ("请求失败：" + (e.message || e));
+    renderChat();
+    const msg = String(e && e.message || e);
+    setState(/Failed to fetch|NetworkError|Load failed/i.test(msg)
+      ? "连不上服务（检查地址协议：https 页面不能用 http 接口）"
+      : ("请求失败：" + msg), "err");
+  }finally{
+    genBusy = false;
+    $("btnSend").disabled = false;
+    updateCtxInfo();
+  }
+}
+
+async function speakText(text){
+  try{
+    const r = await fetch(api("/api/tts"), {
+      method:"POST", headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ text: String(text).slice(0,800), voice:"", rate:"+8%" })
+    });
+    if(!r.ok) return;
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = new Audio(url);
+    a.onended = ()=>{ try{ URL.revokeObjectURL(url); }catch(e){} };
+    a.play().catch(()=>{});
+  }catch(e){}
+}
+
+/* ================= 总结（端到端同样生效） ================= */
+let sumBusy = false, sumTimer = null;
+async function summarize(manual){
+  if(sumBusy) return;
+  const real = msgs.filter(m => !m.streaming);
+  if(real.length < 2){ if(manual) setState("内容太少，先聊几句", "err"); return; }
+  sumBusy = true;
+  const t0 = Date.now();
+  clearInterval(sumTimer);
+  sumTimer = setInterval(()=>{
+    setState("整理中… " + Math.round((Date.now()-t0)/1000) + "s", "busy");
+  }, 500);
+  setState("整理中… 0s", "busy");
+  try{
+    const r = await fetch(api("/api/chat-summary"), {
+      method:"POST", headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ messages: real.slice(-40), prev: memory,
+                             model: cfg.sumModel || "glm-5.3-flash" })
+    });
+    if(!r.ok) throw new Error("HTTP " + r.status);
+    const d = await r.json();
+    memory = {
+      notes: d.notes || [], prefs: d.prefs || [], topics: d.topics || [],
+      summary: d.summary || "", lastSummedIndex: real.length
+    };
+    renderMemory();
+    cloudSave({ memory });
+    setState("记忆已更新（" + Math.round((Date.now()-t0)/1000) + "s，"
+             + (memory.notes||[]).length + " 条要点 / " + (memory.prefs||[]).length + " 条偏好）", "ok");
+  }catch(e){
+    setState("总结失败：" + (e.message||e), "err");
+  }finally{ sumBusy = false; clearInterval(sumTimer); }
+}
+function maybeSummarize(){
+  if(!cfg.autoSum) return;
+  const turns = msgs.filter(m=>m.role==="user").length;
+  if(turns && turns % 4 === 0) summarize(false);
+}
+
+/* ========= 常开语音：边录边识别（VAD 自动断句 + 分片上传） =========
+   与「按一次录一段」不同：打开后一直听，检测到说完（静音 0.65s）就自动切一片
+   上传识别，识别结果实时落进对话。端到端模式下 Omni 只出音频，用户侧文本全靠这条
+   通道产出——既是给人看的，也是给总结模型用的原料。 */
+/* ========= 实时通道（优先）：服务端 VAD 自动断句，避免本地切片把字切断 =========
+   实测：分片按固定长度硬切会出现「这个。个论点…本上」这种断字，
+   实时通道（qwen3-asr-flash-realtime）由服务端判定句子结束，判停约 0.5s，整句输出。 */
+let rtWs=null, rtOn=false, rtReady=false, rtBuf=[], rtBufLen=0, rtErr="";
+let asrPreview="";   // 边说边显示的临时识别文本（服务端增量 stash）
+function rtUrl(){
+  let u = normBase(cfg.base).replace(/^http/, "ws") + "/api/asr-realtime";
+  if(location.protocol === "https:" && u.indexOf("ws://") === 0) u = u.replace("ws://", "wss://");
+  return u;
+}
+function rtStart(){
+  if(rtOn) return;
+  let url=""; try{ url = rtUrl(); }catch(e){ return; }
+  if(!url) return;
+  try{ rtWs = new WebSocket(url); }catch(e){ return; }
+  rtOn=true; rtBuf=[]; rtBufLen=0; rtReady=false; rtErr="";
+  rtWs.onopen = ()=>{
+    rtReady=true;
+    try{ rtWs.send(JSON.stringify({ event_id:"cfg1", type:"session.update", session:{
+      modalities:["text"], input_audio_format:"pcm", sample_rate:16000,
+      input_audio_transcription:{ language:"zh" },
+      turn_detection:{ type:"server_vad", silence_duration_ms: parseInt(cfg.silence || "650", 10) }
+    }})); }catch(e){}
+    if(listening) setState("常开语音：在听（实时）", "busy");
+  };
+  rtWs.onmessage = (m)=>{
+    let ev={}; try{ ev = JSON.parse(m.data); }catch(e){ return; }
+    const t = String(ev.type || "");
+    if(t.indexOf("transcription.text") >= 0){
+      const st = String(ev.stash || ev.text || "");
+      if(st){ asrPreview = st; renderChat(); }          // ★边说边显示
+    }else if(t.indexOf("transcription.completed") >= 0){
+      asrPreview = "";
+      const txt = String(ev.transcript || "").trim();
+      if(txt) onAsrText(txt); else renderChat();
+    }else if(t === "error"){
+      rtErr = String(ev.error || "");
+    }
+  };
+  rtWs.onclose = ()=>{ rtOn=false; rtReady=false; };
+  rtWs.onerror = ()=>{ /* 失败时自动降级到本地分片 */ };
+}
+function rtStop(){
+  rtOn=false; rtReady=false; rtBuf=[]; rtBufLen=0;
+  try{ if(rtWs && rtWs.readyState===1) rtWs.send(JSON.stringify({type:"session.finish"})); }catch(e){}
+  try{ if(rtWs) rtWs.close(); }catch(e){}
+  rtWs=null;
+}
+/* Float32(16k) → int16 → base64，约每 100ms 推一帧 */
+function rtFeed(f32){
+  if(!rtOn || !rtReady || !rtWs || rtWs.readyState !== 1) return;
+  rtBuf.push(new Float32Array(f32)); rtBufLen += f32.length;
+  if(rtBufLen < 1600) return;
+  const n = rtBufLen, all = new Float32Array(n);
+  let o = 0; for(const c of rtBuf){ all.set(c, o); o += c.length; }
+  rtBuf = []; rtBufLen = 0;
+  const i16 = new Int16Array(n);
+  for(let i = 0; i < n; i++){
+    const v = Math.max(-1, Math.min(1, all[i]));
+    i16[i] = v < 0 ? v * 0x8000 : v * 0x7fff;
+  }
+  const u8 = new Uint8Array(i16.buffer);
+  let bin = "";
+  for(let i = 0; i < u8.length; i++) bin += String.fromCharCode(u8[i]);
+  try{ rtWs.send(JSON.stringify({ type:"input_audio_buffer.append", audio:btoa(bin) })); }catch(e){}
+}
+
+const SR = 16000;
+let acIn = null, micStream = null, procNode = null, srcNode = null;
+let listening = false, asrBusy = false;
+let asrQueue = [];
+let bufF = [], bufLen = 0;
+let lastVoiceAt = 0, noiseFloor = 0.004;
+let aiQuietUntil = 0;
+let lastAsrAt = 0;
+let autoReplyTimer = null;
+
+function silenceMs(){ return parseInt(cfg.silence || "650", 10); }
+function maxChunkSamples(){ return Math.round(SR * 2.4); }
+
+async function startListen(){
+  if(listening) return;
+  try{
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio:{ echoCancellation:true, noiseSuppression:true, autoGainControl:true }
+    });
+    acIn = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: SR });
+    await acIn.resume();
+    srcNode = acIn.createMediaStreamSource(micStream);
+    procNode = acIn.createScriptProcessor(2048, 1, 1);
+    procNode.onaudioprocess = onAudio;
+    srcNode.connect(procNode);
+    procNode.connect(acIn.destination);
+    listening = true; bufF = []; bufLen = 0; lastVoiceAt = Date.now();
+    rtStart();                        // 实时通道优先；连不上自动走下面的分片兜底
+    $("btnMic").classList.add("on");
+    $("btnMic").textContent = "⏹";
+    setState("常开语音：在听…", "busy");
+    updateHint();
+  }catch(e){
+    setState("无法使用麦克风：" + (e.message || e), "err");
+  }
+}
+
+function stopListen(){
+  listening = false;
+  try{ procNode && procNode.disconnect(); }catch(e){}
+  try{ srcNode && srcNode.disconnect(); }catch(e){}
+  try{ micStream && micStream.getTracks().forEach(t => t.stop()); }catch(e){}
+  try{ acIn && acIn.close(); }catch(e){}
+  procNode = srcNode = micStream = acIn = null;
+  bufF = []; bufLen = 0; asrQueue = []; asrPreview = "";
+  rtStop();
+  $("btnMic").classList.remove("on");
+  $("btnMic").textContent = "🎤";
+  setState("已停止聆听", "");
+  updateHint();
+}
+
+function toggleMic(){ listening ? stopListen() : startListen(); }
+
+function onAudio(e){
+  if(!listening) return;
+  if(genBusy || Date.now() < aiQuietUntil) return;   // AI 思考/播报期间不收，防回声
+  const d = e.inputBuffer.getChannelData(0);
+  if(rtOn && rtReady){ rtFeed(d); return; }   // ★实时通道：服务端 VAD 断句，杜绝切片断字
+
+  let sum = 0;
+  for(let i = 0; i < d.length; i++) sum += d[i] * d[i];
+  const rms = Math.sqrt(sum / d.length);
+
+  /* 噪声底：安静帧正常跟随，语音帧极缓慢跟随（否则阈值会被自己抬高，越说越听不见） */
+  const thr = Math.max(0.012, noiseFloor * 3.2);
+  if(rms <= thr) noiseFloor = noiseFloor * 0.97 + rms * 0.03;
+  else noiseFloor = noiseFloor * 0.9995 + rms * 0.0005;
+  if(rms > thr) lastVoiceAt = Date.now();
+
+  bufF.push(new Float32Array(d));
+  bufLen += d.length;
+
+  const quiet = Date.now() - lastVoiceAt;
+  if(bufLen >= maxChunkSamples() || (bufLen >= SR * 0.6 && quiet >= silenceMs())){
+    flushChunk();
+  }
+}
+
+function flushChunk(){
+  if(!bufLen) return;
+  const f = new Float32Array(bufLen);
+  let o = 0;
+  for(const c of bufF){ f.set(c, o); o += c.length; }
+  bufF = []; bufLen = 0;
+
+  let voiced = 0;
+  for(let i = 0; i < f.length; i++) if(Math.abs(f[i]) > 0.015) voiced++;
+  if(voiced / f.length < 0.04) return;      // 整片基本静音，不上传
+
+  asrQueue.push(f32ToWav(f, SR));
+  if(asrQueue.length > 6) asrQueue.shift();  // 积压丢弃最旧的，避免一直滞后
+  pumpAsr();
+}
+
+function f32ToWav(f, sr){
+  const n = f.length, ab = new ArrayBuffer(44 + n * 2), v = new DataView(ab);
+  const ws = (off, s) => { for(let i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i)); };
+  ws(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); ws(8, "WAVE");
+  ws(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  ws(36, "data"); v.setUint32(40, n * 2, true);
+  for(let i = 0; i < n; i++){
+    const s = Math.max(-1, Math.min(1, f[i]));
+    v.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  return new Blob([ab], { type: "audio/wav" });
+}
+
+async function pumpAsr(){
+  if(asrBusy) return;
+  asrBusy = true;
+  while(asrQueue.length){
+    const blob = asrQueue.shift();
+    if(listening) setState("识别中…", "busy");
+    try{
+      const qs = "?model=" + encodeURIComponent(cfg.asrModel || "") +
+                 "&ctx=" + encodeURIComponent((cfg.topic || "").slice(0, 80));
+      const r = await fetch(api("/api/asr" + qs), {
+        method:"POST", headers:{ "Content-Type":"audio/wav" }, body: blob
+      });
+      if(!r.ok) continue;
+      const d = await r.json();
+      const t = String(d.text || "").trim();
+      if(t && t.length >= 2) onAsrText(t);
+    }catch(e){ /* 单片失败不中断通道 */ }
+  }
+  asrBusy = false;
+}
+
+/* 识别结果 → 对话：同一次发言的多片自动拼成一条 */
+function onAsrText(t){
+  const now = Date.now();
+  const last = msgs[msgs.length - 1];
+  if(last && last.role === "user" && now - lastAsrAt < 4000){
+    last.content = (last.content + t).replace(/\s+/g, "");
+    last.ts = now;
+  }else{
+    msgs.push({ role:"user", content:t, ts:now, fromAsr:true });
+  }
+  lastAsrAt = now;
+  renderChat(); updateCtxInfo();
+  cloudSave({ messages: msgs });
+  if(cfg.autoJoin){
+    scheduleAutoReply();
+  }else{
+    // ★ 自主参与关闭时也要总结（原设计是「只听并总结」，这里此前漏了）
+    setState("已记录（自主参与关闭，只听并总结）", "");
+    maybeSummarize();
+  }
+}
+
+function scheduleAutoReply(){
+  clearTimeout(autoReplyTimer);
+  autoReplyTimer = setTimeout(() => {
+    if(!cfg.autoJoin) return;
+    if(genBusy){ scheduleAutoReply(); return; }
+    askAi();
+  }, 700);
+}
+
+/* ================= 设置 ================= */
+function fillSettings(){
+  $("cfgTopic").value = cfg.topic || "";
+  $("cfgMode").value = cfg.mode || "omni";
+  $("cfgModel").value = cfg.model || "glm-5.3";
+  $("cfgExtra").value = cfg.extra || "";
+  $("cfgSpeak").checked = !!cfg.speakCascade;
+  $("cfgAutoSum").checked = !!cfg.autoSum;
+  $("autoJoin").checked = !!cfg.autoJoin;
+  $("useFull").checked = !!cfg.useFull;
+  $("useMemory").checked = !!cfg.useMemory;
+  $("useDistill").checked = !!cfg.useDistill;
+  $("cfgSilence").value = cfg.silence || "650";
+  $("cfgSumModel").value = cfg.sumModel || "glm-5.3-flash";
+  if($("cfgAsr").options.length > 1) $("cfgAsr").value = cfg.asrModel || "";
+  $("modeTag").textContent = (cfg.mode === "omni") ? "端到端" : ("级联 · " + (cfg.model || "glm-5.3"));
+  fillDistill();
+  updateHint();
+}
+function readSettings(){
+  cfg.topic = $("cfgTopic").value.trim();
+  cfg.mode = $("cfgMode").value;
+  cfg.model = $("cfgModel").value;
+  cfg.voice = $("cfgVoice").value;
+  cfg.asrModel = $("cfgAsr").value || "";
+  cfg.silence = $("cfgSilence").value || "650";
+  cfg.sumModel = $("cfgSumModel").value || "glm-5.3-flash";
+  cfg.extra = $("cfgExtra").value.trim();
+  cfg.speakCascade = $("cfgSpeak").checked;
+  cfg.autoSum = $("cfgAutoSum").checked;
+  cfg.autoJoin = $("autoJoin").checked;
+  saveCfg();
+  $("modeTag").textContent = (cfg.mode === "omni") ? "端到端" : ("级联 · " + (cfg.model || "glm-5.3"));
+  updateHint();
+}
+
+/* ================= 偏好编辑 ================= */
+function addPref(){
+  const v = prompt("新增一条偏好（例如：喜欢用数据说话）");
+  if(!v || !v.trim()) return;
+  memory.prefs = (memory.prefs || []).concat([v.trim()]).slice(-12);
+  renderMemory(); cloudSave({ memory });
+}
+function editPref(i){
+  const cur = (memory.prefs||[])[i] || "";
+  const v = prompt("修改偏好", cur);
+  if(v === null) return;
+  const s = v.trim();
+  if(!s){ memory.prefs.splice(i,1); }
+  else memory.prefs[i] = s;
+  renderMemory(); cloudSave({ memory });
+}
+function delPref(i){
+  memory.prefs.splice(i,1);
+  renderMemory(); cloudSave({ memory });
+}
+function delNote(i){
+  memory.notes.splice(i,1);
+  renderMemory(); cloudSave({ memory });
+}
+
+/* ================= 初始化 ================= */
+async function loadVoices(){
+  try{
+    const r = await fetch(api("/api/omni-status"));
+    const d = await r.json();
+    const sel = $("cfgVoice");
+    sel.innerHTML = '<option value="">默认</option>';
+    (d.voices || []).forEach(v => {
+      const o = document.createElement("option");
+      o.value = v.id; o.textContent = v.label || v.id;
+      sel.appendChild(o);
+    });
+    if(!d.ok){ $("cfgMode").value = "cascade"; cfg.mode = "cascade"; saveCfg(); }
+  }catch(e){}
+  /* 识别模型清单（端到端模式也用它出文本，供总结与查看） */
+  try{
+    const r = await fetch(api("/api/asr-models"));
+    const d = await r.json();
+    const sel = $("cfgAsr");
+    sel.innerHTML = '<option value="">默认（' + (d.default || "服务端默认") + '）</option>';
+    (d.models || []).forEach(m => {
+      const o = document.createElement("option");
+      o.value = m.id;
+      o.textContent = (m.name || m.id) + (m.note ? " · " + m.note : "");
+      sel.appendChild(o);
+    });
+    sel.value = cfg.asrModel || "";
+  }catch(e){}
+}
+
+function bind(){
+  $("btnSend").onclick = ()=>{
+    const t = $("input").value.trim();
+    if(!t) return;
+    $("input").value = "";
+    send(t);
+  };
+  $("input").addEventListener("keydown", e=>{
+    if(e.key === "Enter" && !e.shiftKey){ e.preventDefault(); $("btnSend").click(); }
+  });
+  $("btnMic").onclick = toggleMic;
+  $("btnSummarize").onclick = ()=> summarize(true);
+  $("btnSettings").onclick = ()=>{ fillSettings(); $("dlg").classList.add("show"); };
+  $("btnCloseDlg").onclick = ()=>{ readSettings(); $("dlg").classList.remove("show"); };
+  $("dlg").onclick = e=>{ if(e.target === $("dlg")){ readSettings(); $("dlg").classList.remove("show"); } };
+  $("autoJoin").onchange = ()=>{ cfg.autoJoin = $("autoJoin").checked; saveCfg(); };
+  ["useFull","useMemory","useDistill"].forEach(id=>{
+    $(id).onchange = ()=>{
+      cfg[id] = $(id).checked; saveCfg(); updateCtxInfo();
+    };
+  });
+  $("btnClear").onclick = ()=>{
+    if(!confirm("清空当前对话？（记忆保留，云端同步）")) return;
+    msgs = []; renderChat(); updateCtxInfo(); cloudSave({ messages: [] });
+    setState("已清空", "");
+  };
+  $("btnAddPref").onclick = addPref;
+  /* 偏好 / 要点 的操作按钮（事件委托） */
+  $("memBox").addEventListener("click", e=>{
+    const t = e.target;
+    if(!(t instanceof HTMLButtonElement)) return;
+    if(t.dataset.prefEdit !== undefined) editPref(Number(t.dataset.prefEdit));
+    else if(t.dataset.prefDel !== undefined) delPref(Number(t.dataset.prefDel));
+    else if(t.dataset.noteDel !== undefined) delNote(Number(t.dataset.noteDel));
+  });
+  /* 蒸馏上传 */
+  $("distillFile").onchange = e=>{
+    const f = e.target.files && e.target.files[0];
+    if(!f) return;
+    const fr = new FileReader();
+    fr.onload = ()=>{
+      distill.text = String(fr.result || "").slice(0, 200000);
+      distill.name = f.name;
+      $("distillText").value = distill.text;
+      $("distillState").textContent = "待保存：" + f.name;
+      updateCtxInfo();
+    };
+    fr.readAsText(f);
+  };
+  $("btnSaveDistill").onclick = ()=>{
+    distill.text = $("distillText").value;
+    cloudSave({ distill: { text: distill.text, name: distill.name || "手动粘贴" } });
+    $("distillState").textContent = "已保存 " + distill.text.length + " 字";
+    updateCtxInfo();
+  };
+  $("btnClearDistill").onclick = ()=>{
+    distill = { text: "", name: "", updatedAt: 0 };
+    $("distillText").value = "";
+    $("distillState").textContent = "未上传";
+    cloudSave({ distill: { text: "", name: "" } });
+    updateCtxInfo();
+  };
+}
+
+window.addEventListener("beforeunload", ()=>{ try{ listening && stopListen(); }catch(e){} });
+
+async function loadMaterials(){
+  const el = $("matTag");
+  if(!el) return;
+  try{
+    const r = await fetch(api("/api/materials"));
+    const d = await r.json();
+    if(d.enabled && d.brief_chars > 0){
+      el.textContent = "📚 队内资料 " + d.brief_chars + " 字";
+      el.style.color = "#7ee2a8";
+    }else{
+      el.textContent = "📚 队内资料 未加载";
+    }
+  }catch(e){ el.textContent = "📚 队内资料 ?"; }
+}
+
+bind();
+renderChat();
+renderMemory();
+fillSettings();
+loadVoices();
+loadMaterials();
+pullCloud();
+setState("就绪", "ok");
+</script>
+</body>
+</html>

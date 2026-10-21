@@ -78,7 +78,7 @@ function ok(n, c, extra = "") { if (c) { pass++; console.log("  ✓ " + n); } el
 
 (async () => {
   await sleep(400);
-  win.eval("cfg.mode='auto'; cfg.diarize=false; cfg.side='正方'; cfg.topic='人工智能'; cfg.autoSave=false; genRebut=async()=>{ genBusy=true; window.__genCalled=(window.__genCalled||0)+1; };");
+  win.eval("cfg.mode='auto'; cfg.diarize=false; cfg.attr=true; cfg.floorMode=false; cfg.side='正方'; cfg.topic='人工智能'; cfg.autoSave=false; genRebut=async()=>{ genBusy=true; window.__genCalled=(window.__genCalled||0)+1; };");
 
   console.log("\n【A. 片内拆分 → 发言人区分明确】");
   win.eval("transcript=[];");

@@ -43,15 +43,15 @@ const on=id=>win.document.getElementById(id).classList.contains("on");
   ok("开始后计时递减（<03:00）", $("clock").textContent!=="03:00", $("clock").textContent);
   $("btnStart").click();
 
-  // 第 6 环节：人机对辩 ① —— 正方一辩 vs 反方二辩(AI)，双方同亮
-  win.eval("S.idx=5; applyStage();"); await sleep(120);
+  // 第 5 环节：人机对辩 ① —— 正方一辩 vs 反方机器人(AI)，双方同亮（2026-10-20 赛制：人机对辩在人人对辩之前）
+  win.eval("S.idx=4; applyStage();"); await sleep(120);
   ok("人机对辩① 环节名含正方一辩", /正方一辩/.test($("stageName").textContent), $("stageName").textContent);
   ok("人机对辩① 正方一辩灯亮（人）", on("seat-pro-1"));
   ok("人机对辩① 反方二辩灯亮（AI）", on("seat-con-2"));
   ok("人机对辩① 未误亮三辩", !on("seat-pro-3") && !on("seat-con-3"));
 
   // 第 7 环节：反方一辩 vs 正方二辩
-  win.eval("S.idx=6; applyStage();"); await sleep(120);
+  win.eval("S.idx=5; applyStage();"); await sleep(120);
   ok("人机对辩② 反方一辩灯亮（人）", on("seat-con-1"));
   ok("人机对辩② 正方二辩灯亮（AI）", on("seat-pro-2"));
   ok("人机对辩② 未误亮一辩对方", !on("seat-pro-1"));

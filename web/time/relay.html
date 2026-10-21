@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>辩论按钮中继 · 第二台电脑</title>
+<style>
+  :root{ --bg:#0d1117; --card:#161b22; --line:#30363d; --txt:#e6edf3; --dim:#8b949e; --red:#b91c1c; }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:16px/1.65 system-ui,"Microsoft YaHei",sans-serif;padding:26px;max-width:920px;margin:0 auto}
+  h1{font-size:23px;margin:0 0 6px}
+  .sub{color:var(--dim);font-size:14px;margin-bottom:20px}
+  .step{font-weight:700;margin:20px 0 10px;color:#c9d1d9}
+  .row{display:flex;gap:12px;flex-wrap:wrap}
+  button{padding:13px 22px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--txt);font-size:16px;cursor:pointer;transition:.15s}
+  button:hover{border-color:#3b82f6}
+  button.sel{border-color:#3b82f6;background:#1e3a8a;font-weight:700}
+  #btnConn{background:var(--red);border-color:var(--red);font-weight:700;padding:15px 30px}
+  #btnConn:disabled{opacity:.5;cursor:not-allowed}
+  .state{padding:13px 16px;border-radius:10px;background:var(--card);border:1px solid var(--line);margin:18px 0}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:#666;margin-right:9px;vertical-align:middle}
+  .dot.ok{background:#22c55e;box-shadow:0 0 8px #22c55e}
+  pre{background:#0b0f14;border:1px solid var(--line);border-radius:10px;padding:12px;height:230px;overflow:auto;font-size:13px;color:#9ecbff;margin:12px 0 0;white-space:pre-wrap}
+  .hint{color:var(--dim);font-size:13px;margin-top:10px;line-height:1.7}
+  code{background:#21262d;padding:1px 6px;border-radius:4px;font-size:13px}
+</style>
+</head>
+<body>
+
+<h1>辩论按钮中继（第二台电脑）</h1>
+<div class="sub">
+  这台电脑上插的那块板，按键会实时同步到大屏机。<b>板子里的程序不用改。</b>
+</div>
+
+<div class="step">① 这台电脑插的是哪一块？</div>
+<div class="row">
+  <button id="pickPro" class="sel">正方板</button>
+  <button id="pickCon">反方板</button>
+</div>
+
+<div class="step">② 连接串口</div>
+<div class="row">
+  <button id="btnConn">连接开发板</button>
+</div>
+
+<div class="state"><span class="dot" id="dot"></span><span id="stateTxt">未连接</span></div>
+
+<div class="step">③ 直接按板子上的按钮</div>
+<div class="hint">
+  大屏机那边（<code>https://120.48.43.211/debate/time/</code>）会立刻亮灯、开始计时。<br>
+  本页必须用 <b>https</b> 打开，否则浏览器不允许读串口。<br>
+  下面窗口显示板子实际发来的每一行，用来确认程序输出格式。
+</div>
+
+<pre id="log"></pre>
+
+<script>
+const $ = id => document.getElementById(id);
+let side = "pro";
+let port = null, reader = null, sent = 0;
+
+$("pickPro").onclick = () => { side = "pro"; $("pickPro").classList.add("sel"); $("pickCon").classList.remove("sel"); };
+$("pickCon").onclick = () => { side = "con"; $("pickCon").classList.add("sel"); $("pickPro").classList.remove("sel"); };
+
+function log(t){
+  const el = $("log");
+  el.textContent += t + "\n";
+  if(el.textContent.length > 5000) el.textContent = el.textContent.slice(-3500);
+  el.scrollTop = el.scrollHeight;
+}
+function setState(t, ok){
+  $("stateTxt").textContent = t;
+  $("dot").className = "dot" + (ok ? " ok" : "");
+}
+
+async function connect(){
+  if(!("serial" in navigator)){
+    setState("浏览器不支持串口：请用 Chrome/Edge，并且用 https 打开本页");
+    return;
+  }
+  if(port){ setState("已经连过了，如需重连请刷新本页"); return; }
+  try{
+    $("btnConn").disabled = true;
+    port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 115200 });
+    setState("串口已连接（" + (side === "pro" ? "正方板" : "反方板") + "）", true);
+    log("=== 串口已打开 115200 ===");
+    readLoop();
+  }catch(e){
+    $("btnConn").disabled = false;
+    setState("连接失败：" + (e.message || e));
+  }
+}
+
+async function readLoop(){
+  const dec = new TextDecoderStream();
+  port.readable.pipeTo(dec.writable).catch(()=>{});
+  reader = dec.readable.getReader();
+  let buf = "";
+  try{
+    while(true){
+      const { value, done } = await reader.read();
+      if(done) break;
+      buf += value;
+      let i;
+      while((i = buf.indexOf("\n")) >= 0){
+        const line = buf.slice(0, i).trim();
+        buf = buf.slice(i + 1);
+        if(line) onLine(line);
+      }
+    }
+  }catch(e){}
+  setState("串口已断开（拔线或板子掉电）");
+  $("btnConn").disabled = false;
+  port = null;
+}
+
+/* ★兼容多种输出写法：A1:D / A1:U / A1 D / A1D / A1:按下 / A1:松开 / A1:ON / A1:OFF
+   板子上那份程序无论用哪种写法，这里都能认。 */
+function onLine(line){
+  log("← " + line);
+  const m = line.match(/^([A-Za-z]?)(\d)\s*[:：]?\s*(D|U|DOWN|UP|按下|松开|ON|OFF)$/i);
+  if(!m) return;
+  const no = m[2];
+  if(!/^(D|DOWN|按下|ON)$/i.test(m[3])) return;      // 只转发「按下」，松开忽略
+  const seat = (no === "2" || no === "4") ? 3 : 1;    // 按钮1→一辩，按钮2→三辩
+  send({ side, seat, action:"down", source:"button", board: side === "pro" ? "A" : "B" });
+}
+
+async function send(payload){
+  try{
+    const r = await fetch("/debate/api/buzzer", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    sent++;
+    log("→ " + JSON.stringify(payload) + (r.ok ? "  ✓" : "  ✗ " + r.status));
+    setState("已连接 · 已发送 " + sent + " 次", true);
+  }catch(e){
+    log("→ 发送失败：" + (e.message || e));
+  }
+}
+
+$("btnConn").onclick = connect;
+</script>
+</body>
+</html>

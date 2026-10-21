@@ -18,9 +18,10 @@
  * 接线（默认，可改）：
  *   按钮1  —— GPIO 4   —— 另一端接 GND
  *   按钮2  —— GPIO 5   —— 另一端接 GND
- *   按钮3  —— GPIO 19  —— 另一端接 GND   （仅 BOARD '4' 用）
- *   按钮4  —— GPIO 21  —— 另一端接 GND   （仅 BOARD '4' 用）
- *   蜂鸣器 —— GPIO 18  —— 有源蜂鸣器正极接 18，负极接 GND
+ *   按钮3  —— GPIO 6   —— 另一端接 GND   （仅 BOARD '4' 用）
+ *   按钮4  —— GPIO 7   —— 另一端接 GND   （仅 BOARD '4' 用）
+ *   蜂鸣器 —— GPIO 10  —— 有源蜂鸣器正极接 10，负极接 GND
+ *   ★ ESP32-C3：GPIO18/19 是 USB 差分线，绝不能接外设（会把 USB 掐断）
  *   （INPUT_PULLUP，按下读到 LOW；用宠物语音按钮拆出来的轻触开关时，
  *     取其**对角两脚**，同侧两脚是常通的）
  *
@@ -46,9 +47,11 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 
-const int BUZZER = 18;
-const int LED    = 2;         // 开发板自带 LED（DevKit 常见为 GPIO2，低电平点亮）
-const int PIN_BTN[4] = { 4, 5, 19, 21 };
+/* ★ ESP32-C3 引脚禁区：GPIO18/19 = USB D-/D+（占用即断 USB）、GPIO20/21 = UART0、
+   GPIO8/9 = strapping/BOOT、GPIO11~17 = 片上 Flash。以下已全部避开。 */
+const int BUZZER = 10;        // 原为 18 —— C3 的 18 是 USB D-，会掐断 USB
+const int LED    = 2;         // 开发板自带 LED（C3 各板不同，若判断不确定可把 HAS_LED 设为 0）
+const int PIN_BTN[4] = { 4, 5, 6, 7 };   // 原为 {4,5,19,21} —— 19 是 USB D+、21 是 UART TX
 const unsigned long DEBOUNCE_MS = 15;
 
 struct Btn {
@@ -180,8 +183,10 @@ void setup() {
   Serial.begin(115200);
   delay(200);
   buildButtons();
+#if HAS_BUZZER
   pinMode(BUZZER, OUTPUT);
   digitalWrite(BUZZER, LOW);
+#endif
 #if HAS_LED
   pinMode(LED, OUTPUT); setLed(false);
 #endif

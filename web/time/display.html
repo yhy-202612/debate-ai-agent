@@ -135,6 +135,7 @@
   <button id="btnPrev">上一环节<span class="kbd">（←）</span></button>
   <button id="btnReset">重置本环节<span class="kbd">（R）</span></button>
   <button id="btnSerial">连接开发板（可连两块）</button>
+  <button id="btnSwap" title="两块板插反了时点这里交换正/反方">交换正/反</button>
   <button id="btnHelp">说明<span class="kbd">（H）</span></button>
   <button id="btnKeys" title="隐藏/显示键位提示（快捷键 K）">键位提示：开</button>
   <div class="spacer"></div>
@@ -339,10 +340,12 @@ function beep(times=1, freq=880, dur=0.12){
 }
 
 /* ---------- 计时主循环 ---------- */
-function startClock(){
+function startClock(announce){
   if(S.running || S.finished) return;
   { const st0 = RULES[S.idx];
-    if(st0 && st0.kind !== "free"){
+    /* ★announce=false：由按钮触发的开始，发言人已由点击的那一方决定，
+       不能再按「环节默认方」广播 stage-start，否则会先报一个错误发言方。 */
+    if(announce !== false && st0 && st0.kind !== "free"){
       /* 计时开始 = 本环节正式发言开始 → 发言人即环节默认方（自由辩论另走 free_grant） */
       buzzPub({action:"floor", who: st0.side, seat: st0.seat, stage: S.idx, reason:"stage-start"});
     } }
@@ -412,7 +415,13 @@ const serialBoards = new Set();// 已握手/已上报过的板号 A / B / 4
 const BTN_MAP = {              // 每块板 2 个按钮；'4' = 一块板 4 个按钮
   "A1":"pro-1", "A2":"pro-3", "B1":"con-1", "B2":"con-3",
   "41":"pro-1", "42":"pro-3", "43":"con-1", "44":"con-3",
+  "A3":"pro-1", "A4":"pro-3", "B3":"con-1", "B4":"con-3",
 };
+/* ★两块板烧的是同一份程序（都只发 A1/A2）时，板子的正/反不再靠首字母，
+   改由「连接顺序」决定：第 1 次连的 = 正方，第 2 次 = 反方（可用「交换」按钮调换）。
+   按钮号 → 辩位：1→一辩，2→三辩，3/4 备用（真人只有一辩、三辩两个位置）。 */
+const SEAT_BY_NO = { "1":1, "2":3, "3":1, "4":3 };
+let lastSerialRaw = "";        // 最近一行原始串口数据（排查用，按 F12 控制台可看）
 
 function setSerialState(txt, cls){
   $("serialState").textContent = txt;
@@ -427,7 +436,8 @@ async function connectSerial(){
   try{
     const port = await navigator.serial.requestPort();
     await port.open({ baudRate: 115200 });
-    const link = { port, writer: port.writable.getWriter(), board: "" };
+    /* 第 1 块 = 正方，第 2 块 = 反方（板子里烧同一份程序也分得清） */
+    const link = { port, writer: port.writable.getWriter(), board: "", side: serialLinks.length === 0 ? "pro" : "con" };
     serialLinks.push(link);
     serialPort = port; serialWriter = link.writer;
     setSerialState(serialLinks.length === 1 ? "已连接 1 块板（再点一次可连第二块）" : "已连接 2 块板", "ok");
@@ -457,30 +467,51 @@ async function readSerial(link){
   setSerialState(serialLinks.length ? ("已连接 " + serialLinks.length + " 块板") : "已断开（拔线或板子掉电）");
 }
 function onSerialLine(line, link){
-  /* 协议：<板号><按钮号>:D / :U   板号 A=正方侧、B=反方侧、4=一板四键 */
-  if(/^READY/.test(line)){
-    const b = line.replace(/^READY\s*/, "").trim();
-    if(b){ serialBoards.add(b); if(link) link.board = b; refreshSerialLabel(); }
+  /* ★协议兼容：A1:D / A1:U / A1 D / A1D / A1:按下 / A1:松开 / A1:ON / A1:OFF
+     板的「正/反」优先由连接顺序决定（link.side）——两块板烧同一份程序也分得清；
+     没有 side 时再退回按首字母 A=正方 / B=反方 判断。 */
+  lastSerialRaw = line;
+  if(/^READY/i.test(line)){
+    const b = line.replace(/^READY\s*/i, "").trim();
+    if(b){ if(link) link.board = b.toUpperCase(); serialBoards.add(b.toUpperCase()); refreshSerialLabel(); }
     return;
   }
-  const m = line.match(/^([AB4])(\d):([DU])$/);
+  const m = line.match(/^([A-Za-z]?)(\d)\s*[:：]?\s*(D|U|DOWN|UP|按下|松开|ON|OFF)$/i);
   if(m){
-    if(link){ link.board = m[1]; serialBoards.add(m[1]); refreshSerialLabel(); }
-    const key = m[1] + m[2];
-    if(m[3] === "D"){
-      const who = BTN_MAP[key] || "";
-      onButton(key);
-      postBuzz(who.indexOf("con") === 0 ? "B" : "A");     // ★按「哪个辩位」定方向（一板四键也正确）
+    const no = m[2];
+    const isDown = /^(D|DOWN|按下|ON)$/i.test(m[3]);
+    if(link){
+      if(m[1]) link.board = m[1].toUpperCase();
+      serialBoards.add(link.side === "con" ? "B" : "A");
+      refreshSerialLabel();
+    }
+    if(isDown){
+      const side = (link && link.side) ? link.side : (String(m[1] || "").toUpperCase() === "B" ? "con" : "pro");
+      const seat = SEAT_BY_NO[no] || 1;
+      onSeat(side, seat);
+      postBuzz(side === "con" ? "B" : "A");
     }
     return;
   }
-  const b2 = line.match(/^([AB4]):BEAT$/);
-  if(b2){ serialBoards.add(b2[1]); if(link) link.board = b2[1]; refreshSerialLabel(); }
+  const b2 = line.match(/^([A-Za-z]?):BEAT$/i);
+  if(b2){ if(link && b2[1]) link.board = b2[1].toUpperCase(); serialBoards.add((link && link.side === "con") ? "B" : "A"); refreshSerialLabel(); }
   if(/^PING/.test(line)) sendSerial("PONG", link);
 }
 function refreshSerialLabel(){
+  /* 优先按「这块口连的是哪一方」显示，两块板烧同一份程序也能分辨 */
+  if(serialLinks.length){
+    const names = serialLinks.map(l => (l.side === "con" ? "反方板" : "正方板") + (l.board ? "(" + l.board + ")" : ""));
+    setSerialState("本机已连 " + names.join(" + "), "ok");
+    return;
+  }
   const names = [...serialBoards].map(b => b === "A" ? "正方板" : b === "B" ? "反方板" : "四键板");
   if(names.length) setSerialState("已连接 " + names.join(" + "), "ok");
+}
+/* 交换两块板的左右（先插了反方板时用） */
+function swapSides(){
+  for(const l of serialLinks) l.side = (l.side === "con" ? "pro" : "con");
+  refreshSerialLabel();
+  beep(1, 700);
 }
 /* ★ 发令总线：实体按钮 / 环节切换 / 抢话仲裁 全部走这里，智能体侧订阅后即时响应 */
 function buzzPub(payload){
@@ -580,6 +611,17 @@ function onSeat(side, seat){
     }
     // ② 本方正在说，另一位同侧辩手按 → 拒绝（不能同侧接力）
     if(S.freeOwner && S.freeOwner.side === side){
+      /* ★但若此刻占着发言权的是 AI（二辩 seat=2），同侧真人按按钮 = 人接管发言：
+         灯立刻转给真人，并广播 human-takeover 让 AI 当场闭嘴。
+         （AI 抢到后真人想接替，不能被「不得同侧接力」挡回去） */
+      if(S.freeOwner.seat === 2 && seat !== 2){
+        S.freeOwner = { side, seat }; S.freeLast = side;
+        setSpeaker(side, seat);
+        beep(1, 880);
+        hintEl.textContent = cn + SEAT_NAME[seat] + " 接管发言（AI 已停止）";
+        buzzPub({action:"free_deny", side, reason:"human-takeover"});
+        return;
+      }
       beep(1, 300);
       hintEl.textContent = cn + SEAT_NAME[S.freeOwner.seat] + "正在发言 · 不得同侧接力，请" + other + "接话";
       buzzPub({action:"free_deny", side, reason:"same-side"});
@@ -593,7 +635,8 @@ function onSeat(side, seat){
       return;
     }
     // ④ 对方接话 / 开场第一位
-    const isHandoff = !!S.freeOwner;
+    /* 上一句是对方说的 → 这一下是「接话」；开场第一位才是「抢到发言」 */
+    const isHandoff = !!S.freeOwner || (S.freeLast && S.freeLast !== side);
     S.freeOwner = { side, seat }; S.freeLast = side;
     setSpeaker(side, seat);
     if(!S.running) startClock();                     // 自由辩论共用同一倒计时，接话不重置
@@ -606,14 +649,14 @@ function onSeat(side, seat){
   if(S.running && seatEl(side,seat)?.classList.contains("on")){
     stopClock(); hintEl.textContent = "发言结束（已暂停计时）";
   }else{
-    setSpeaker(side, seat); startClock();
+    setSpeaker(side, seat); startClock(false);   // ★按钮触发，不再广播 stage-start 的默认发言方
     /* ★质询环节：一问一答双方交替开口，按钮无法表达「现在是哪一方」——
        只亮灯/计时，**不发 floor**，让智能体按声纹/识别自行判定谁在说。 */
     if(st.kind === "quiz"){
       hintEl.textContent = (side==="pro"?"正方":"反方") + SEAT_NAME[seat] + " 开口（本环节自动识别发言人）";
     }else{
-      /* 按钮按下 = 该侧真人开始发言 */
-      buzzPub({action:"floor", who: side, seat, stage: S.idx, reason:"button"});
+      /* 按钮按下 = 该侧真人开始发言；human:true 让智能体立刻闭嘴（真人优先） */
+      buzzPub({action:"floor", who: side, seat, stage: S.idx, reason:"button", human:true});
       hintEl.textContent = (side==="pro"?"正方":"反方") + SEAT_NAME[seat] + " 开始发言";
     }
   }
@@ -627,6 +670,7 @@ $("btnNext").onclick  = ()=> nextStage();
 $("btnPrev").onclick  = ()=> prevStage();
 $("btnReset").onclick = ()=> resetStage();
 $("btnSerial").onclick= ()=> connectSerial();
+$("btnSwap").onclick = ()=> swapSides();
 $("btnHelp").onclick  = ()=> showHelp();
 $("btnKeys").onclick  = ()=>{ hideKeys = !hideKeys; applyHideKeys(); syncHints(); };
 /* 键位提示开关：读回上次偏好 */
@@ -663,9 +707,13 @@ function showHelp(){
        <b>R</b> 重置本环节　<b>F</b> 全屏　<b>H</b> 本说明　<b>K</b> 隐藏/显示键位提示</p>
     <p style="color:var(--muted)">比赛投屏前建议按 <b>K</b> 关掉键位提示（按钮上的快捷键括号与「按空格」引导都会隐藏），
        底部再按一次即可恢复。</p>
-    <p><b>按钮（开发板）</b>：每块 ESP32 接 2 个按钮，板号 A=正方侧、B=反方侧。
-       串口协议：<kbd>A1:D</kbd> 按下 / <kbd>A1:U</kbd> 松开，115200 波特率；
-       电脑回发 <kbd>A:BUZZ</kbd> 让蜂鸣器响。</p>
+    <p><b>按钮（开发板）</b>：每块 ESP32 接 2 个按钮，115200 波特率，
+       板子上报 <kbd>A1:D</kbd> 按下 / <kbd>A1:U</kbd> 松开。
+       本机连的板按<b>连接顺序</b>定正反（第 1 块=正方、第 2 块=反方），插反了点<b>「交换正/反」</b>即可。</p>
+    <p><b>两块板分别插在两台电脑</b>：大屏这台用「连接开发板」连一块；
+       另一台电脑打开 <a href="relay.html" target="_blank" style="color:#6ea8ff">按钮中继页</a>，
+       选好正方/反方后连另一块板 —— 那台的按键会经服务器同步到本大屏，<b>板子程序不用改</b>。
+       （中继页需用 https 打开，浏览器才允许读串口。）</p>
     <p><b>没有开发板时</b>：可用键盘 <kbd>1</kbd><kbd>2</kbd>（正方两个按钮）、
        <kbd>3</kbd><kbd>4</kbd>（反方两个按钮）模拟抢话；也可直接点击左右两侧的辩位卡片手动置灯。</p>
     <p><b>灯的规则</b>：该发言的一方灯亮；最后 ${WARN_SEC} 秒闪烁；时间到转红并自动进入下一环节；

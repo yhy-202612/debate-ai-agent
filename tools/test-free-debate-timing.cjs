@@ -110,7 +110,7 @@ const ok = (name, cond, extra = "") => { results.push({ name, pass: !!cond, extr
 async function runCase(label, { streamTts, gapMs }) {
   console.log(`\n======== ${label} ========`);
   win.eval(`
-    cfg.mode="auto"; cfg.streamMode=true; cfg.diarize=false; cfg.side="正方"; cfg.omni=false;
+    cfg.mode="auto"; cfg.streamMode=true; cfg.diarize=false; cfg.attr=true; cfg.floorMode=false; cfg.side="正方"; cfg.omni=false;
     cfg.streamMinChars=20; cfg.streamGapMs=${gapMs}; cfg.streamTts=${streamTts ? "true" : "false"};
     cfg.speakGap=2200; cfg.speakCooldown=0; cfg.summaryEnabled=false;
     transcript=[]; queue.length=0; lastSentences=[]; preAudioBuf=[]; preHold=false;
@@ -155,7 +155,7 @@ async function runCase(label, { streamTts, gapMs }) {
 async function runRisk(label, fn) {
   console.log(`\n======== ${label} ========`);
   win.eval(`
-    cfg.mode="auto"; cfg.streamMode=true; cfg.diarize=false; cfg.side="正方"; cfg.omni=false;
+    cfg.mode="auto"; cfg.streamMode=true; cfg.diarize=false; cfg.attr=true; cfg.floorMode=false; cfg.side="正方"; cfg.omni=false;
     cfg.streamMinChars=20; cfg.streamGapMs=7000; cfg.streamTts=true;
     transcript=[]; queue.length=0; preHold=false; genBusy=false; playing=false;
     lastSpeakAt=0; lastStreamAt=0; streamAtOppChars=0; window.__genCount=0;
